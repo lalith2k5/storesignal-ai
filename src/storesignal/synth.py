@@ -695,7 +695,7 @@ def _rating(issue, rng, severity_of):
     return float(rng.choice([2, 3, 3, 4, 4, 5]))
 
 
-def make(days=None, n_stores=None, incidents=None, decoy_store=None):
+def make(days=None, n_stores=None, incidents=None, decoy_store=None, write=True):
     sc = cfg['synth']
     days = days or sc['days']
     n_stores = n_stores or sc['n_stores']
@@ -823,21 +823,22 @@ def make(days=None, n_stores=None, incidents=None, decoy_store=None):
     df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
     df['is_synthetic'] = True
 
-    out = ROOT / 'data' / 'synthetic'
-    out.mkdir(parents=True, exist_ok=True)
-    df[['record_id', 'channel', 'ts', 'store_id', 'region', 'text_raw', 'rating']].to_parquet(
-        out / 'records.parquet')
-    df[['record_id', 'issue', 'planted', 'is_synthetic']].rename(
-        columns={'issue': 'true_issue'}).to_parquet(out / 'truth.parquet')
-    gt = [{'store': inc['store'], 'issue': inc['issue'],
-           'start_ts': (start + pd.Timedelta(days=inc['start'])).isoformat(), 'len': inc['len']}
-          for inc in incidents]
-    json.dump(gt, open(out / 'ground_truth_incidents.json', 'w'), indent=2)
-    print('synth: %d records (%d stores, %d days) written to data/synthetic/'
-          % (len(df), n_stores, days))
-    print('  planted: %s' % df['planted'].value_counts().to_dict())
-    print('  channels: %s' % df['channel'].value_counts().to_dict())
-    print('  regions: %s' % df['region'].value_counts().to_dict())
+    if write:
+        out = ROOT / 'data' / 'synthetic'
+        out.mkdir(parents=True, exist_ok=True)
+        df[['record_id', 'channel', 'ts', 'store_id', 'region', 'text_raw', 'rating']].to_parquet(
+            out / 'records.parquet')
+        df[['record_id', 'issue', 'planted', 'is_synthetic']].rename(
+            columns={'issue': 'true_issue'}).to_parquet(out / 'truth.parquet')
+        gt = [{'store': inc['store'], 'issue': inc['issue'],
+               'start_ts': (start + pd.Timedelta(days=inc['start'])).isoformat(), 'len': inc['len']}
+              for inc in incidents]
+        json.dump(gt, open(out / 'ground_truth_incidents.json', 'w'), indent=2)
+        print('synth: %d records (%d stores, %d days) written to data/synthetic/'
+              % (len(df), n_stores, days))
+        print('  planted: %s' % df['planted'].value_counts().to_dict())
+        print('  channels: %s' % df['channel'].value_counts().to_dict())
+        print('  regions: %s' % df['region'].value_counts().to_dict())
     return df
 
 

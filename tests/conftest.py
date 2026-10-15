@@ -7,7 +7,7 @@ from storesignal import synth
 def sample_groups():
     inc = [{'store': 'S03', 'issue': 'freezer_failure', 'start': 45, 'len': 5,
             'per_day': 2.0, 'channels': ['review', 'staff_note', 'call']}]
-    df = synth.make(days=60, n_stores=8, incidents=inc).rename(columns={'true_issue': 'issue'})
+    df = synth.make(days=60, n_stores=8, incidents=inc, write=False).rename(columns={'true_issue': 'issue'})
     df['group_id'] = df['record_id']
     return df.sort_values('ts').reset_index(drop=True)
 
@@ -26,6 +26,6 @@ def risers():
             'ramp': g['issue'] == 'cold_chain_failure',
             'channels': ['review', 'staff_note', 'call']}
            for g in gt]
-    df = synth.make(days=60, n_stores=12, incidents=inc).rename(columns={'true_issue': 'issue'})
+    df = synth.make(days=60, n_stores=12, incidents=inc, write=False).rename(columns={'true_issue': 'issue'})
     df['group_id'] = df['record_id']
     return df.sort_values('ts').reset_index(drop=True)

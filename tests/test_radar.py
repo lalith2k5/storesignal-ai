@@ -60,7 +60,7 @@ def test_decoy_quiet():
     from storesignal import synth
     inc = [{'store': 'S01', 'issue': 'cold_chain_failure', 'start': 45, 'len': 5,
             'per_day': 2.0, 'channels': ['review', 'staff_note', 'call']}]
-    df = synth.make(days=60, n_stores=12, incidents=inc).rename(columns={'true_issue': 'issue'})
+    df = synth.make(days=60, n_stores=12, incidents=inc, write=False).rename(columns={'true_issue': 'issue'})
     df['group_id'] = df['record_id']
     df = df.sort_values('ts').reset_index(drop=True)
     decoy = 'S09'
@@ -73,7 +73,7 @@ def test_national_rise():
     """A slow national rise in app crashes fires no single-store alert but
     shows as a national trend (7-day rate vs prior 28-day rate)."""
     from storesignal import synth
-    df = synth.make(days=60, n_stores=12, incidents=[]).rename(columns={'true_issue': 'issue'})
+    df = synth.make(days=60, n_stores=12, incidents=[], write=False).rename(columns={'true_issue': 'issue'})
     df['group_id'] = df['record_id']
     df = df.sort_values('ts').reset_index(drop=True)
     alerts = run_radar(df, cfg['radar'])

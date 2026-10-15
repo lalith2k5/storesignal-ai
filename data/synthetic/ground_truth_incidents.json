@@ -1,1 +1,20 @@
-[]
+[
+  {
+    "store": "S07",
+    "issue": "cold_chain_failure",
+    "start_ts": "2026-07-20T00:00:00+00:00",
+    "len": 6
+  },
+  {
+    "store": "S21",
+    "issue": "allergen_mislabel",
+    "start_ts": "2026-08-01T00:00:00+00:00",
+    "len": 5
+  },
+  {
+    "store": "S34",
+    "issue": "rude_service",
+    "start_ts": "2026-08-04T00:00:00+00:00",
+    "len": 7
+  }
+]
