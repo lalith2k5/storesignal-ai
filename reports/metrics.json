@@ -1,7 +1,7 @@
 {
   "source": "SYNTHETIC",
   "data_mode": "synthetic",
-  "generated_at": "2026-10-15T09:05:50.380465+00:00",
+  "generated_at": "2026-10-15T09:15:33.105515+00:00",
   "classification": {
     "source": "SYNTHETIC",
     "macro_f1": 0.7779,
