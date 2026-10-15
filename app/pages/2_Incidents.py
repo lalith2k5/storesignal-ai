@@ -70,7 +70,7 @@ if len(cluster_ids):
     G = build_graph(cluster_ids[0], cluster, alert_row['store_id'])
     with tempfile.NamedTemporaryFile(suffix='.html', delete=False) as tf:
         render_graph(G, tf.name)
-        st.components.v1.html(Path(tf.name).read_text(encoding='utf-8'), height=560)
+        st.html(Path(tf.name).read_text(encoding='utf-8'))
     st.caption('Correlated pattern. A shared cause is a hypothesis until verified. '
                'Use wording such as \u201cpossible common refrigeration issue\u201d, '
                'never \u201cthe freezer broke\u201d.')

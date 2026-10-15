@@ -1,6 +1,7 @@
 """Ingestion: read the four channels and the store master, validate, quarantine."""
 import csv
 import json
+import warnings
 from pathlib import Path
 
 import pandas as pd
@@ -51,8 +52,15 @@ def parse_ts(series):
         parsed = pd.to_datetime(values, errors='coerce', utc=True)
         return parsed, 'iso', round(100 * parsed.notna().mean(), 2)
 
-    dfirst = pd.to_datetime(values, errors='coerce', dayfirst=True)
-    mfirst = pd.to_datetime(values, errors='coerce', dayfirst=False)
+    with warnings.catch_warnings():
+        # pandas warns on mixed-format inputs; we're deliberately
+        # trialling both parses and comparing success rates.
+        warnings.filterwarnings('ignore', category=UserWarning,
+                                message='.*dayfirst.*')
+        warnings.filterwarnings('ignore', category=UserWarning,
+                                message='.*Could not infer format.*')
+        dfirst = pd.to_datetime(values, errors='coerce', dayfirst=True)
+        mfirst = pd.to_datetime(values, errors='coerce', dayfirst=False)
     rate_d, rate_m = dfirst.notna().mean(), mfirst.notna().mean()
     if rate_d >= rate_m:
         return dfirst, 'dayfirst', round(100 * rate_d, 2)
