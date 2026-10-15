@@ -149,8 +149,7 @@ def run():
         # also write CSV for the Trust page / manual review
         import pandas as _pd
         cm_df = _pd.DataFrame(cm, index=labels, columns=labels)
-        (_pd.io.common.Path(__file__).parent.parent.parent / 'reports' / 'confusion_matrix.csv').write_text('')
-        cm_df.to_csv(__file__.replace('src/storesignal/evaluate.py', 'reports/confusion_matrix.csv'))
+        cm_df.to_csv(reports / 'confusion_matrix.csv')
         out['accuracy_vs_coverage'] = metrics.accuracy_vs_coverage(
             m['p1'], m['issue'] == m['true_issue'])
         out['ece'] = round(metrics.ece(m['p1'], m['issue'] == m['true_issue']), 4)
@@ -158,17 +157,21 @@ def run():
         out['classification'] = {'status': 'NOT RUN', 'reason': 'no synthetic truth / dev labels'}
 
     # ---- severity / actionability vs dev labels if present ----
+    _SEV_MAP = {0: 'low', 1: 'medium', 2: 'high', 3: 'critical'}
+    def _sev_str(s):
+        return s.map(lambda v: _SEV_MAP.get(v, v) if not isinstance(v, str) else v)
+
     dev_path = ROOT / 'data' / 'labels_dev' / 'dev_labels.csv'
     if dev_path.exists():
         dev = pd.read_csv(dev_path)
         d = rec.merge(dev, on='record_id', how='inner')
         if 'severity' in dev.columns and len(d) >= 30:
-            sev = metrics.classification_metrics(d['severity_y'], d['severity_x'])
+            sev = metrics.classification_metrics(_sev_str(d['severity_y']), _sev_str(d['severity_x']))
             out['severity_dev'] = {'source': 'DEV', 'macro_f1': round(sev['macro_f1'], 4), 'n': len(d)}
         else:
             out['severity_dev'] = {'status': 'NOT RUN'}
         if 'actionable' in dev.columns and len(d) >= 30:
-            act = metrics.classification_metrics(d['actionable_y'], d['actionable_x'])
+            act = metrics.classification_metrics(d['actionable_y'].astype(int), d['actionable_x'].astype(int))
             out['actionability_dev'] = {'source': 'DEV', 'macro_f1': round(act['macro_f1'], 4), 'n': len(d)}
         else:
             out['actionability_dev'] = {'status': 'NOT RUN'}
