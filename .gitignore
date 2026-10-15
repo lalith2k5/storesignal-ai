@@ -23,3 +23,8 @@ reports/runs/*/config.yaml
 .vscode/
 .idea/
 src/*.egg-info/
+
+# Private implementation guides — not for public distribution
+_doc1_implementation_guide.txt
+_doc2_r5.pdf.txt
+_doc3_project_report.pdf.txt
