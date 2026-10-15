@@ -1,20 +1,38 @@
-"""QA tool (§17): print N random policy flags per category for manual precision review.
-Usage: python scripts/qa_policy_review.py [n_per_category]
+"""QA tool (guide section 17): sample non-negated policy hits per category
+for manual precision review.
+
+Usage:
+    python scripts/qa_policy_review.py [n_per_category]
+
+Writes reports/qa_policy_sample.txt. Open it, mark each line TP or FP,
+record per-category precision in reports/qa_notes.md.
 """
 import sys
+
 import pandas as pd
 
-N = int(sys.argv[1]) if len(sys.argv) > 1 else 50
+from storesignal.config import ROOT
 
-hits = pd.read_parquet('data/processed/policy_hits.parquet')[['record_id', 'category', 'negated']]
-recs = pd.read_parquet('data/processed/records_scored.parquet')[['record_id', 'text_masked']]
-df = hits.merge(recs, on='record_id', how='left')
+N = int(sys.argv[1]) if len(sys.argv) > 1 else 20
 
-for cat in sorted(df['category'].unique()):
-    sub = df[(df['category'] == cat) & (~df['negated'])]
+df = pd.read_parquet(ROOT / "data" / "processed" / "policy_hits.parquet")
+df = df[["record_id", "category", "span", "negated", "text_masked"]]
+
+lines = []
+for cat in sorted(df["category"].unique()):
+    sub = df[(df["category"] == cat) & (~df["negated"])]
+    total = len(sub)
     sub = sub.sample(min(N, len(sub)), random_state=42)
-    print(f"\n===== {cat} ({len(sub)} sampled / {(df['category'] == cat).sum()} total) =====")
+    lines.append(f"\n===== {cat}  ({len(sub)} sampled / {total} total) =====")
     for i, r in enumerate(sub.itertuples(), 1):
-        print(f"  [{i:02d}] {r.text_masked[:140]}")
+        span = (getattr(r, "span", "") or "")[:30]
+        text = (getattr(r, "text_masked", "") or "")[:160]
+        lines.append(f"  [{i:02d}] match={span!r:30s}  text={text!r}")
 
-print("\nReview each line as TP (truly a problem) or FP (false positive). Record precision per category in docs/qa_notes.md.")
+out = ROOT / "reports" / "qa_policy_sample.txt"
+out.parent.mkdir(parents=True, exist_ok=True)
+out.write_text("\n".join(lines))
+print("\n".join(lines))
+print(f"\nwrote {out}")
+print("\nMark each line TP (truly a problem) or FP (false positive). "
+      "Record per-category precision in reports/qa_notes.md.")

@@ -1,5 +1,6 @@
 """Safety-first policy engine. Runs on every record, before deduplication and
 before any model threshold. Nothing downstream can switch it off."""
+from rapidfuzz import fuzz
 import re
 
 import yaml
@@ -21,6 +22,24 @@ class PolicyEngine:
         self.spec = spec
         self.cats = {c: {**v, 'rx': [(_compile(p), p) for p in v['patterns']]}
                      for c, v in spec['categories'].items()}
+        # Context negations: word-level cues that suppress a match.
+        # e.g. "gluten free section" is wayfinding, not a mislabel;
+        # "coupon expired" is a promo problem, not spoiled food.
+        ctx = spec.get('context_negations') or {}
+        self.ctx_window = int(ctx.get('window_words', 3))
+        self.ctx_cues = {k.lower(): [w.lower() for w in v]
+                         for k, v in (ctx.get('cues') or {}).items()}
+        self.ctx_thr = 85  # fuzzy ratio for typo tolerance (secton ~ section)
+
+    def _context_negated(self, matched_word, before_words, after_words):
+        cues = self.ctx_cues.get(matched_word)
+        if not cues:
+            return False
+        for w in before_words + after_words:
+            for c in cues:
+                if fuzz.ratio(w, c) >= self.ctx_thr:
+                    return True
+        return False
 
     def scan(self, text_norm):
         hits = []
@@ -30,5 +49,10 @@ class PolicyEngine:
                     before = text_norm[:m.start()].split()[-3:]
                     after = text_norm[m.end():].split()[:2]  # Hindi/Marathi/Tamil negate after the noun
                     negated = any(w in self.neg for w in before + after)
+                    if not negated:
+                        ctx_before = text_norm[:m.start()].split()[-self.ctx_window:]
+                        ctx_after = text_norm[m.end():].split()[:self.ctx_window]
+                        if self._context_negated(m.group(0).lower(), ctx_before, ctx_after):
+                            negated = True
                     hits.append({'category': cat, 'pattern': pat, 'span': m.group(0), 'negated': negated})
         return hits

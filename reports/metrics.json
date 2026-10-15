@@ -1,7 +1,7 @@
 {
   "source": "SYNTHETIC",
   "data_mode": "synthetic",
-  "generated_at": "2026-10-15T09:15:33.105515+00:00",
+  "generated_at": "2026-10-15T09:37:07.835475+00:00",
   "classification": {
     "source": "SYNTHETIC",
     "macro_f1": 0.7779,
@@ -1285,7 +1285,7 @@
   "ece": 0.1311,
   "severity_dev": {
     "source": "DEV",
-    "macro_f1": 0.9786,
+    "macro_f1": 0.9312,
     "n": 537
   },
   "actionability_dev": {
@@ -1379,21 +1379,21 @@
   "precision_statement": {
     "source": "SYNTHETIC-TRUTH",
     "overall": {
-      "n": 561,
-      "actionable": 391,
-      "precision": 0.697,
+      "n": 525,
+      "actionable": 417,
+      "precision": 0.7943,
       "wilson_95": [
-        0.6577,
-        0.7336
+        0.7576,
+        0.8267
       ]
     },
     "policy_tier": {
-      "n": 534,
-      "actionable": 364,
-      "precision": 0.6816,
+      "n": 497,
+      "actionable": 389,
+      "precision": 0.7827,
       "wilson_95": [
-        0.641,
-        0.7197
+        0.7443,
+        0.8167
       ]
     },
     "emerging_tier": {
