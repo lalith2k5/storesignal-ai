@@ -61,3 +61,21 @@ Effect of the fix on the corpus:
 Reproduce:
     .venv/bin/python scripts/qa_policy_review.py 20
     cat reports/qa_policy_sample.txt
+
+## Severity F1 trade-off (side effect of policy context-negation fix)
+
+The context-negation fix (gluten-in-section, coupon-expired) lowered the
+number of records that receive a policy severity floor. This moved the
+severity-dev macro-F1:
+
+  severity_dev macro_f1:  0.9786  ->  0.9312   (-4.7 pt)
+  actionability_dev:      0.9547  ->  0.9547   (unchanged)
+  policy precision:       0.6816  ->  0.7827   (+10.1 pt)
+  overall precision:      0.697   ->  0.7943   (+9.7 pt)
+
+This is the intended trade: +10 pt precision on escalated alerts for
+-5 pt severity agreement. The policy tier explicitly favours precision
+over recall after the fix; severity-F1 is dev-measured on 537 records.
+
+Reproduce:
+    .venv/bin/python -c "import json; m=json.load(open('reports/metrics.json')); print(m['severity_dev'])"

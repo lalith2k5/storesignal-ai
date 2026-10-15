@@ -22,7 +22,11 @@ online reviews, in-app comments, staff shift notes, call-centre transcripts) int
 
 ## Status
 
-**Demo-first build, complete and running end-to-end on synthetic data.** The organizers'
+**Demo-first build, complete, verified end-to-end, and stable on synthetic data.**
+36/36 tests pass. The pipeline is idempotent: `make all` followed by a second
+`make all` produces zero new alerts. Source synthetic data is protected by a
+regression test (`tests/test_synth_write.py`) so no test or fixture can silently
+clobber it. The organizers'
 40k-record dataset, taxonomy, store master and `evaluate.py` arrive on the final day; the
 four ⚠ DATA-DEPENDENT files (`adapters.py`, `evaluate_adapter.py`, `taxonomy.yaml`,
 `routing.yaml`) plus the final-day runbook are designed so the real-data hookup is a short,
@@ -74,6 +78,27 @@ tests/           unit + integration tests (radar causality, decoy, national rise
 Three separate mechanisms — **classifier** (statistics), **policy** (rules), **radar**
 (trend) — and none of them can switch off another. Raw data is immutable; every derived
 file rebuilds with one command.
+
+
+## QA and measured results (on synthetic data, tagged SYNTHETIC)
+
+Run after any change to the pipeline or policy:
+
+| Check | Command | Latest result |
+|---|---|---|
+| Tests | `make test` | 36 passed |
+| Classification | `reports/metrics.json` → `classification` | macro F1 0.7779, weighted 0.8439, n 45,863 |
+| Severity / actionability | `reports/metrics.json` → `severity_dev` / `actionability_dev` | 0.9312 / 0.9547 (n=537) |
+| Alert precision | `reports/metrics.json` → `precision_statement` | overall 0.7943 (Wilson [0.7576, 0.8267]); policy tier 0.7827; emerging tier 0.9394 |
+| Radar | `reports/metrics.json` → `radar` | 33 alerts, 0.0427 false alerts per store-week |
+| Planted incidents | `reports/metrics.json` → `radar.planted_incidents` | S07 DET 75.8h, S21 MISS (policy caught), S34 DET 59.6h |
+| PII scan | `python scripts/qa_pii_scan.py` | PASS, 561 alerts / 1,440 evidence rows scanned |
+| Cluster fusion QA | `python scripts/qa_cluster_sample.py` | 27/30 correct (90%) — 3 over-merges documented |
+| Policy precision QA | `python scripts/qa_policy_review.py 20` | 80/80 (100%) — see `reports/qa_notes.md` |
+| Brief number check | every brief passes `verify()` at render time | pass |
+
+Manual QA notes and the honesty log live in `reports/qa_notes.md` and
+`reports/eval_log.csv`.
 
 ## Honest limits (read me)
 
