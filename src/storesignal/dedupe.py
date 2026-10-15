@@ -1,0 +1,174 @@
+"""Deduplication and incident fusion.
+
+Layers (thresholds are starting values; hand-check 50 pairs near each
+threshold and adjust):
+  S1 exact   -- same store and same normalized text (hash, global)       -> dup_group_id
+  S2 near    -- same store + issue, within 72h, cosine >= cos_dup or
+                fuzz.ratio >= fuzz_dup (checked against the last few
+                records of the store's issue stream)                     -> dup_group_id
+  S3 fusion  -- same store + issue, contiguous in time (consecutive gap
+                <= incident_gap_h)                                       -> incident_cluster_id
+
+S3 deliberately uses same-issue time-contiguity instead of pair-wise cosine
+chaining: on real code-mixed data, cross-language variants of one issue sit
+around cosine 0.77-0.88, while transitive 72h pair-chains across a family
+merged everything into giant clusters (see docs/decisions.md).
+"""
+import hashlib
+
+import numpy as np
+import pandas as pd
+import yaml
+from rapidfuzz import fuzz
+
+from .config import ROOT, cfg
+
+import re as _re
+
+
+class UnionFind:
+    def __init__(self, n):
+        self.p = list(range(n))
+
+    def find(self, x):
+        while self.p[x] != x:
+            self.p[x] = self.p[self.p[x]]
+            x = self.p[x]
+        return x
+
+    def union(self, a, b):
+        self.p[self.find(a)] = self.find(b)
+
+
+
+
+def _cap_cluster_span(out, max_span_h):
+    """Safety net: split any incident_cluster_id whose members span more than
+    max_span_h hours into consecutive sub-clusters ordered by time. Uses
+    pandas Timedelta comparison directly -- no numpy view tricks."""
+    if max_span_h is None or max_span_h <= 0:
+        return out
+    ts = pd.to_datetime(out['ts'])
+    span_limit = pd.Timedelta(hours=int(max_span_h))
+    new_ids = [None] * len(out)
+    from collections import defaultdict
+    by_cid = defaultdict(list)
+    for i, cid in enumerate(out['incident_cluster_id'].values):
+        by_cid[cid].append(i)
+    for cid, positions in by_cid.items():
+        positions_sorted = sorted(positions, key=lambda i: ts.iloc[i])
+        cur_start_ts = None
+        sub = 0
+        for i in positions_sorted:
+            t = ts.iloc[i]
+            if cur_start_ts is None or (t - cur_start_ts) > span_limit:
+                cur_start_ts = t
+                sub += 1
+            new_ids[i] = f'{cid}s{sub}'
+    out = out.copy()
+    out['incident_cluster_id'] = new_ids
+    return out
+
+
+def assign_groups(df, E, win_h=72, cos_dup=0.94, fuzz_dup=86, incident_gap_h=72, max_span_h=240):
+    """df rows align with E (normalized embeddings). df needs store_id, ts,
+    text_norm, issue, family, entities (list)."""
+    df = df.copy()
+    if 'issue' not in df.columns:
+        if 'family' in df.columns:
+            df['issue'] = df['family']
+        else:
+            df['issue'] = 'unknown'
+
+    df = df.copy()
+    if 'issue' not in df.columns:
+        if 'family' in df.columns:
+            df['issue'] = df['family']
+        else:
+            df['issue'] = 'unknown'
+
+    n = len(df)
+    dup, inc = UnionFind(n), UnionFind(n)
+
+    # S1: exact duplicates (same store + same normalized text), any time apart.
+    seen = {}
+    for i, (s, t) in enumerate(zip(df['store_id'].astype(str), df['text_norm'].astype(str))):
+        h = hashlib.md5((str(s) + '|' + t).encode('utf-8')).hexdigest()
+        if h in seen:
+            dup.union(i, seen[h])
+        else:
+            seen[h] = i
+
+    texts = df['text_norm'].astype(str).tolist()
+    hours = df['ts'].values.view('int64') / 3.6e12  # ns since epoch -> hours
+
+    # S2 + S3: walk each (store, issue) stream in time order.
+    for (store, issue), idx in df.groupby(['store_id', 'issue'], sort=False).indices.items():
+        idx = idx[np.argsort(df['ts'].values[idx])]
+        recent = []  # last few record positions in this stream (for S2)
+        chain_last = None  # last record of the open incident cluster (S3)
+        chain_start = None  # first record of the open incident cluster (S3 span cap)
+        for pos in idx:
+            # S2: compare against the last up-to-4 records of this stream
+            for j in reversed(recent):
+                if hours[pos] - hours[j] > win_h:
+                    break
+                cos = float(E[pos] @ E[j])
+                if cos >= cos_dup or fuzz.ratio(texts[pos], texts[j]) >= fuzz_dup:
+                    dup.union(pos, j)
+                    break
+            recent.append(pos)
+            if len(recent) > 4:
+                recent.pop(0)
+            # S3: same store + issue, contiguous in time (gap <= incident_gap_h)
+            # AND total cluster span <= max_span_h (breaks transitive chaining)
+            if chain_last is None:
+                chain_start = pos
+            elif hours[pos] - hours[chain_last] > incident_gap_h:
+                # gap too large: open a new cluster
+                chain_start = pos
+            elif chain_start is not None and hours[pos] - hours[chain_start] > max_span_h:
+                # this record would push the cluster span past the cap: break
+                chain_start = pos
+            else:
+                inc.union(pos, chain_last)
+                if chain_start is None:
+                    chain_start = chain_last
+            chain_last = pos
+
+    out = df.copy()
+    out['dup_group_id'] = ['d%d' % dup.find(i) for i in range(n)]
+    out['incident_cluster_id'] = ['c%d' % inc.find(i) for i in range(n)]
+    out = _cap_cluster_span(out, max_span_h)
+    return out
+
+
+def compile_entities(path=None):
+    spec = yaml.safe_load(open(path or ROOT / 'config' / 'entities.yaml', encoding='utf-8'))
+    words = [(w, _re.compile(r'\b' + _re.escape(w) + r'\b')) for w in spec['equipment'] + spec['products']]
+    ids = {k: _re.compile(v) for k, v in spec.get('id_patterns', {}).items()}
+    return words, ids
+
+
+def extract_entities(text_norm, compiled):
+    words, ids = compiled
+    ents = [w for w, rx in words if rx.search(text_norm)]
+    for name, rx in ids.items():
+        m = rx.search(text_norm)
+        if m:
+            ents.append(name + ':' + m.group(1))
+    return ents
+
+
+def propagate_policy(df):
+    """Never lose a risk: policy_any per dup_group_id and incident_cluster_id
+    (true if any member was policy-flagged). The earliest record in each
+    duplicate group is canonical. Nothing is deleted."""
+    df = df.copy()
+    agg = df.groupby('dup_group_id')['policy_flag'].max()
+    df['policy_any'] = df['dup_group_id'].map(agg).fillna(False).astype(bool)
+    agg_c = df.groupby('incident_cluster_id')['policy_flag'].max()
+    df['cluster_policy_any'] = df['incident_cluster_id'].map(agg_c).fillna(False).astype(bool)
+    order = df.groupby('dup_group_id')['ts'].transform('min')
+    df['canonical'] = (df['ts'] == order)
+    return df

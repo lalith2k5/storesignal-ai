@@ -1,0 +1,8 @@
+# Entity gazetteer used by incident fusion and the connection graph.
+equipment: [freezer, fridge, chiller, refrigerator, ac, pos, scanner, trolley, lift, shelf, counter, escalator, "card machine", "self checkout"]
+products: [milk, curd, "ice cream", bread, eggs, chocolate, juice, biscuits, rice, oil, "tetra pack", vegetables, fruits, meat, paneer, butter, cheese, "frozen food"]
+id_patterns:
+  batch: 'batch\s*#?\s*(\w+)'
+  lot: 'lot\s*#?\s*(\w+)'
+  order: 'order\s*#?\s*(\w+)'
+  sku: 'sku\s*#?\s*(\w+)'

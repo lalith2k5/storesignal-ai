@@ -1,0 +1,6 @@
+{
+  "model": "intfloat/multilingual-e5-small",
+  "dim": 384,
+  "rows": 45863,
+  "text_hash": "d1e11b146f0c82ec"
+}

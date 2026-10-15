@@ -1,0 +1,53 @@
+# Normalization dictionary: abbreviations and spelling variants.
+# Grown from the data, never from guesses. After each normalize run, check
+# reports/unknown_tokens.txt for the 400 most frequent tokens and add
+# spelling groups here.
+abbreviations:
+  plz: please
+  pls: please
+  frzr: freezer
+  frz: freezer
+  mgr: manager
+  cust: customer
+  bcoz: because
+  cuz: because
+  thx: thanks
+  tmrw: tomorrow
+  tdy: today
+  yday: yesterday
+  aftr: after
+  evng: evening
+  mrng: morning
+  amt: amount
+  qty: quantity
+  ppl: people
+variants:            # canonical: [spellings seen in the data]
+  nahi: [nahin, nhi, nai, nahee]
+  kharab: [kharaab, kharabb, karab]
+  thanda: [thandaa, thandi, thande]
+  garam: [garm, garamm]
+  baasi: [basi, baasee]
+  keeda: [keede, kida, kide]
+  ganda: [gandi, gande, gandagi]
+  illai: [illa, illae, ille]
+  romba: [rombha, rumba]
+  khup: [khoop, khupach]
+  bahut: [bahot, bohot]
+  paisa: [paisa, paise, pesa]
+  aaj: [aajj]
+  kal: [kall]
+  saaman: [samaan, saman]
+  mera: [mera, meri, mere]
+  theek: [theek, thik]
+  araam: [aram, aaram]
+  jaldi: [jaldi, jaldhi]
+  nalla: [nallaa, nala]
+  mosam: [mosam, moshum]
+  enna: [enna, yenna]
+  inga: [ingge, inga]
+  sapadu: [saapadu, sapad]
+  aahe: [ahe, aaahe]
+  changla: [changala, changle]
+  majha: [majha, maza]
+  kay: [kaay, kayy]
+  vishay: [vishay, vishai]

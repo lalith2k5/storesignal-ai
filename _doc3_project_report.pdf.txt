@@ -1,0 +1,498 @@
+
+===== PAGE 1 =====
+StoreSignal AI | Project Report
+Page 1
+ StoreSignal AI
+ Turning Store Chatter Into Action
+ Project Report
+ A multilingual retail operations early-warning and incident-resolution
+ intelligence system
+Purpose
+Project definition, technical architecture, implementation plan, and hackathon
+demonstration strategy
+Project status
+Interactive UI demo defined; data/backend integration and measured model
+performance remain to be implemented and validated
+Prepared
+14 October 2026
+ Design principle: detect weak signals early, explain why they matter, escalate
+ risk regardless of volume, and help teams take accountable action.
+
+
+===== PAGE 2 =====
+StoreSignal AI | Project Report
+Page 2
+1. Executive Summary / Project Overview
+1.1 Overview
+StoreSignal AI is a proposed AI-assisted retail operations intelligence system that converts unstructured, multilingual
+feedback into prioritized, evidence-backed actions for store and regional teams. It addresses the gap between
+collecting customer and employee feedback and acting on emerging operational problems before they become
+widespread or severe.
+The project scenario contains approximately 40,000 feedback records from four channels:
+  Online reviews
+  In-app comments
+  Staff shift notes
+  Call-centre transcripts
+ The records may contain code-mixed English and Hinglish, transliterated Tamil and Marathi, spelling errors, emojis,
+abbreviations, incomplete sentences, and truncated text. The system is expected to map feedback to an issue
+taxonomy of roughly 30 categories, identify severity and actionability, route incidents to the appropriate owning
+function, and produce concise weekly regional briefs.
+A central design principle is that risk and volume must be treated separately. Safety-related reports involving
+potential allergens, food hygiene, or staff misconduct must be escalated according to explicit policy even when only a
+small number of reports exist. Separately, the system should detect emerging issues that are increasing unusually
+quickly within a store or region, even when their absolute volume remains small.
+1.2 Proposed value
+StoreSignal AI aims to help teams:
+  Detect developing store issues earlier by combining signals across channels.
+  Understand code-mixed and noisy feedback more reliably than a simple sentiment-only pipeline.
+  Separate high-risk cases from ordinary high-volume complaints.
+  Explain why an alert was generated and show the supporting source evidence.
+  Assign a suggested owner and next action using the store master and issue taxonomy.
+  Produce a concise weekly regional action brief.
+  Measure classification quality, escalation precision, and early-warning lead time using the provided evaluation
+ workflow.
+1.3 Product position
+Position StoreSignal AI as an early-warning and incident-resolution intelligence layer for retail operations, not
+merely a sentiment-analysis dashboard. Its distinctive workflow is:
+Raw feedback → normalized text → issue classification → cross-channel incident fusion → trend/risk
+detection → evidence-backed alert → owner routing → action tracking → regional brief.
+The proposed interactive dashboard is a demonstration UI using illustrative sample records. It is not yet evidence of a
+working production model, and its simulated figures must not be presented as measured performance.
+2. Core Objectives & Scope
+2.1 Core objectives
+  Classify feedback: Assign one or more issue categories from the available taxonomy, plus severity and actionability
+ labels where required.
+ Handle language variation: Process code-mixed English/Hinglish and transliterated Tamil/Marathi alongside typos,
+ emojis, abbreviations, and incomplete records.
+
+
+===== PAGE 3 =====
+StoreSignal AI | Project Report
+Page 3
+ Find emerging incidents: Detect sharp local increases and unusual trends, not just the largest complaint counts.
+  Fuse related signals: Connect reports that may describe the same incident across channels, stores, shifts, or time
+ windows.
+ Apply risk policy: Ensure designated safety and conduct issues are escalated regardless of complaint volume.
+  Explain every alert: Show evidence snippets, time window, contributing channels, confidence/uncertainty, and the
+ reason for escalation.
+ Route action: Recommend the owning function and an appropriate next step using the store master and taxonomy.
+  Support regional decisions: Generate concise weekly briefs with priorities, trends, evidence, owners, and actions.
+  Evaluate honestly: Use the supplied evaluate.py workflow and seeded incidents to measure quality and lead time
+ without using hidden labels to train or tune the system.
+ Track resolution: Where implementation time permits, track assignment, acknowledgement, action, and resolution.
+ 
+2.2 In scope
+  Ingestion and validation of the four stated feedback channels.
+  Text normalization and language-aware processing.
+  Issue, severity, and actionability classification.
+  Cross-channel grouping and duplicate handling.
+  Emerging-issue detection using time windows and appropriate baselines.
+  Explicit risk-policy rules for mandatory escalation.
+  Evidence-backed alerts and owner routing.
+  Weekly regional brief generation.
+  Interactive prototype demonstrating the end-to-end workflow.
+  Offline evaluation and a reproducible demo.
+ 
+2.3 Out of scope for the initial MVP
+  Fully autonomous decisions that replace store managers or safety teams.
+  Claims of causal root-cause identification without corroborating evidence.
+  A production-grade enterprise integration or live connection to all source systems.
+  A web app as the only deliverable; the project’s core requirement is the software intelligence system, while the current
+ demo is an interactive UI.
+ Unverified claims of accuracy, time saved, or incident prevention.
+ 
+2.4 Inputs, outputs, and users
+Inputs
+  Feedback text and channel metadata
+  Timestamp and store identifier, where available
+  Store master and regional mapping
+  Issue taxonomy and owning-function mapping
+  Risk and escalation policy
+  Evaluation labels accessed only through the designated evaluation workflow
+ Outputs
+  Issue category, severity, actionability, and uncertainty
+  Candidate incident groups and supporting evidence
+ 
+
+===== PAGE 4 =====
+StoreSignal AI | Project Report
+Page 4
+ Emerging-issue alerts and trend summaries
+  Suggested owner and recommended next action
+  Regional weekly brief
+  Evaluation metrics and incident replay results
+ Primary users
+  Store managers
+  Regional operations managers
+  Customer experience and support teams
+  Food-safety, compliance, and people/HR functions, as applicable
+  Analysts responsible for reviewing model quality
+ 
+3. Detailed Solutions Discussed
+Module A — Data ingestion and preparation
+#### A1. Multi-channel ingestion Create a common record schema for online reviews, in-app comments, shift notes,
+and call-centre transcripts. Preserve source channel, timestamp, store ID, and source-record ID when available.
+#### A2. Data quality and normalization
+  Handle missing fields, encoding issues, duplicate records, malformed timestamps, and empty text.
+  Normalize whitespace and common text artifacts without erasing meaningful emphasis or negation.
+  Preserve both raw text and normalized text for auditability.
+  Treat emojis, abbreviations, typos, and truncation as signals rather than automatically deleting them.
+  Apply privacy controls to personal information in transcripts and staff notes.
+ #### A3. Code-mixed language intelligence Support English/Hinglish and transliterated Tamil/Marathi. Begin with
+language-agnostic or multilingual text representations and add carefully designed normalization dictionaries for
+common transliterations and retail terms. Avoid aggressive translation that can change meaning, severity, or negation.
+Validation: Evaluate performance by channel and language pattern, not only on an overall average.
+Module B — Issue classification and actionability
+#### B1. Taxonomy-based classification Map each record to the relevant category or categories in the approximately
+30-item issue taxonomy. Use the provided store master and taxonomy definitions as the source of truth for names and
+owner mappings.
+A practical baseline is a multilingual transformer or embedding-based classifier, compared against a simpler
+TF-IDF/linear model. The final choice should be based on validation results, implementation time, and
+reproducibility—not on model size alone.
+#### B2. Multi-task prediction Where the dataset supports it, predict:
+  Issue type
+  Severity
+  Actionability
+  Owning function or routing category
+ Keep the risk-policy layer separate from the statistical classifier so policy-required escalations cannot be suppressed
+merely because a model score is low.
+#### B3. Uncertainty handling Use confidence thresholds or calibrated probabilities only after validation. Send
+ambiguous or low-confidence cases to human review instead of forcing a potentially incorrect category.
+
+
+===== PAGE 5 =====
+StoreSignal AI | Project Report
+Page 5
+Module C — Early-Warning Radar
+This is the signature capability for the hackathon demonstration.
+#### C1. Detecting emerging issues Monitor counts or rates by store, issue category, and time window. Detect sharp
+local increases even if the total count is not among the highest. Potential methods include rolling baselines, moving
+averages, robust z-scores, or count-based anomaly methods; select the simplest method that performs well on the
+available data.
+#### C2. Store-size-aware intelligence Where exposure denominators are available—such as transactions, visits, or
+units sold—compare rates rather than raw counts. If denominators are missing, use a documented proxy such as
+historical store-specific volume and clearly label the limitation. Do not treat all stores as directly comparable when their
+size or reporting volume differs.
+#### C3. Cross-store pattern transfer Look for similar issue categories emerging at multiple stores in nearby time
+windows. Where supplier, equipment, product, or region identifiers exist, use them as possible linking evidence. A
+shared cause must remain a hypothesis until verified.
+#### C4. Forecasting what may happen next As a stretch feature, estimate whether a trend may continue or worsen.
+Start with transparent trend-based forecasts and clearly label them as estimates. Do not claim certainty or present
+forecasts as confirmed incidents.
+Module D — Cross-Channel Incident Fusion and Deduplication
+#### D1. Incident fusion Group records that may refer to the same underlying incident using combinations of:
+  Store and location identifiers
+  Issue category
+  Timestamp proximity
+  Text similarity or multilingual embeddings
+  Product, equipment, or supplier identifiers, if available
+ #### D2. Deduplication Identify exact and near-duplicate messages so repeated copies do not artificially inflate issue
+counts. Preserve links to the original records and avoid deleting source data.
+#### D3. Root-cause connection graph Show related signals as a graph of reports, possible incident, store, time, and
+relevant product/equipment entities. For example, a customer report about warm milk and a staff note about a noisy
+freezer may be connected as a possible refrigeration incident.
+The graph should explain why items were linked. It must distinguish a correlated pattern from a confirmed root
+cause.
+Module E — Safety-First Guardrail
+Potential allergen, hygiene, food-safety, and staff-misconduct reports require policy-defined high-priority handling
+regardless of volume.
+Implementation principles:
+  Maintain an explicit list of mandatory-risk categories and routing rules.
+  Apply rules independently of emerging-volume detection.
+  Make policy matches visible in the alert explanation.
+  Route to the appropriate safety, compliance, or people function defined by the project taxonomy.
+  Use human review and established operational procedures for consequential decisions.
+  Do not let deduplication or a low classifier score silently remove a risk signal.
+ The system should support both risk escalation and trend detection as separate mechanisms. A single severe
+report may require immediate review even when no trend exists.
+
+
+===== PAGE 6 =====
+StoreSignal AI | Project Report
+Page 6
+Module F — Evidence-Backed Alerts and Explainability
+Every alert should provide:
+  A concise summary of the suspected issue
+  Supporting text snippets and source channels
+  Store, time window, and issue category
+  Number of unique reports and any deduplication notes
+  Why it was flagged: policy rule, rising trend, cross-channel evidence, or a combination
+  Confidence or uncertainty, if validated
+  Suggested owner and next action
+  A link or reference to the underlying records
+ Avoid unsupported causal language. Use wording such as “possible common refrigeration issue” until evidence
+confirms the cause.
+Module G — Automatic Action Routing
+Use the issue taxonomy and store master to map alerts to an owning function. Create a routing table with:
+  Issue category
+  Default owner
+  Required severity
+  Mandatory escalation rule
+  Suggested first action
+  Escalation destination or SLA, if supplied by the project
+ Routing should be deterministic for mandatory policy rules and configurable for normal operational categories. A
+human should be able to correct the owner and record the reason.
+Module H — Regional Brief Generator
+Generate a concise, one-page weekly brief for regional managers. It should prioritize action over narrative.
+Recommended structure:
+  Executive summary: most important changes this week.
+  Priority incidents: severity, store, evidence, owner, and next step.
+  Emerging signals: sharp increases, small-but-rising issues, and cross-store patterns.
+  Safety and compliance: policy-triggered items requiring review.
+  Actions due: owner, status, and overdue items where tracked.
+  Data caveats: missing denominators, low-confidence classifications, or limited evidence.
+ The language model, if used for summarization, should summarize only retrieved evidence and structured findings. It
+must not invent counts, causes, or actions.
+Module I — Incident Replay Simulator
+The replay feature is a strong demonstration device. It shows the timeline of an incident as records arrive:
+  First weak signal
+  Additional report from another channel
+  Trend or fusion trigger
+  Alert and severity decision
+  Owner routing and recommended action
+ 
+
+===== PAGE 7 =====
+StoreSignal AI | Project Report
+Page 7
+For the three seeded incidents, replay should demonstrate when the system would have detected the issue and how
+much lead time it achieved relative to the evaluation reference point. Do not hardcode the seeded answers or use
+hidden labels to tune the detector.
+Module J — Action Impact Simulator
+As a stretch feature, allow a manager to compare response options, such as inspection, maintenance escalation, or
+following a product-safety procedure. Show urgency, owner, effort, and the rationale for each option. Any estimated
+benefit must be clearly labeled as a scenario estimate, not a measured result.
+Module K — Human Feedback Learning Loop
+Let reviewers label alerts as correct, incorrect, duplicate, already resolved, or misrouted. Keep an audit trail. Use
+feedback for error analysis and future model improvements; do not automatically retrain on unreviewed or noisy
+feedback.
+Module L — Incident-to-Resolution Tracker
+Track the workflow: Detected → Reviewed → Assigned → Action taken → Resolved
+Capture timestamps, owner, action note, resolution status, and repeat incidents where feasible. This turns StoreSignal
+from a reporting tool into an operational follow-through tool.
+Module M — Trust, Evaluation, and Monitoring
+Track:
+  Classification quality by issue category
+  Macro-F1 or other metrics appropriate for class imbalance
+  Precision and recall for actionable alerts
+  Precision of escalated actionable issues
+  Detection lead time on the three seeded incidents
+  False alerts per store or per week
+  Duplicate/fusion quality
+  Coverage and error rates by channel and language pattern
+  Policy compliance for mandatory-risk cases
+  Human override and resolution outcomes
+ A trust panel should show real evaluation values only after running the actual evaluation. Until then, use blank
+placeholders or clearly marked illustrative demo values.
+Module N — Interactive Demo Prototype
+The discussed StoreSignal AI UI includes:
+  Command Center: headline indicators, priority queue, and recent feedback stream
+  Early-Warning Radar: selectable incident scenarios and chronological replay
+  Incident Explorer: search, evidence, owner, severity, action, and replay
+  Regional Action Brief: region selector and exportable text brief
+  Model & Trust: evaluation placeholders and validation checklist
+ The current UI is a prototype using simulated data. It is useful for storytelling and user-flow validation but is not
+connected to the 40,000-record dataset or a live model. Before judging, label all simulated data clearly and avoid
+presenting placeholder metrics as achieved results.
+
+
+===== PAGE 8 =====
+StoreSignal AI | Project Report
+Page 8
+4. Implementation Steps / Action Plan
+Phase 1 — Understand the data and rules
+  Inspect schemas for all four sources and the store master.
+  Confirm the taxonomy, owner mapping, severity definitions, and mandatory-risk categories.
+  Identify missing fields, language patterns, duplicate rates, and store/time coverage.
+  Define a reproducible train/validation/test approach that prevents leakage across near-duplicate records or incident
+ timelines.
+ Keep evaluation labels isolated from training and tuning.
+ Deliverable: data dictionary, taxonomy/routing table, risk-policy specification, and data-quality report.
+Phase 2 — Build a reliable baseline
+  Create a unified ingestion and normalization pipeline.
+  Build a simple baseline classifier.
+  Add category, severity, and actionability predictions as supported by labels.
+  Add an explicit policy-based escalation layer.
+  Run the provided evaluate.py workflow and record a baseline.
+ Deliverable: reproducible pipeline and baseline metrics.
+Phase 3 — Add the signature early-warning capability
+  Aggregate issue signals by store, category, and time window.
+  Implement a rolling baseline or robust anomaly detector.
+  Normalize by exposure where available; document any proxy used.
+  Test the three seeded incidents without hardcoding their identities.
+  Tune only on permitted validation data and report lead time and false-alert behavior.
+ Deliverable: Early-Warning Radar with measurable seeded-incident replay.
+Phase 4 — Fuse evidence and route alerts
+  Add cross-channel incident grouping.
+  Add deduplication with links back to source records.
+  Generate evidence-backed alert explanations.
+  Connect categories to owners using the store master/taxonomy.
+  Add mandatory-risk checks and verify they operate independently of volume.
+ Deliverable: incident explorer, explainable alerts, and owner routing.
+Phase 5 — Produce the regional brief
+  Aggregate validated findings by region and week.
+  Rank issues using risk policy and trend evidence, not raw volume alone.
+  Generate a one-page brief with supporting evidence and next actions.
+  Add caveats for uncertainty, missing exposure data, and incomplete coverage.
+  Check generated text against source facts.
+ Deliverable: exportable regional action brief.
+Phase 6 — Connect the UI and prepare the demo
+  Replace illustrative records with actual pipeline outputs.
+ 
+
+===== PAGE 9 =====
+StoreSignal AI | Project Report
+Page 9
+ Connect Command Center, Radar, Incident Explorer, Brief, and Trust views to the same data model.
+  Add a visible “demo/simulated data” label wherever sample data remains.
+  Prepare a fixed, reproducible replay scenario.
+  Ensure a reset path so the demo can be repeated reliably.
+ Deliverable: integrated demo prototype.
+Phase 7 — Validate and rehearse
+  Run the evaluation script from a clean environment.
+  Save the metrics, configuration, and run instructions.
+  Check high-risk policy cases and false negatives manually.
+  Review classification errors by language, channel, and category.
+  Rehearse a three-minute story: scattered signals → connected evidence → early warning → policy-aware escalation
+ → owner action → evaluation proof.
+Deliverable: evaluation report, demo checklist, and concise presentation.
+Suggested prioritization
+Priority
+Feature
+Reason
+P0 — Must build
+Data pipeline, taxonomy
+classifier, risk guardrail,
+evaluation
+Required foundation and safety correctness
+P0 — Must build
+Early-Warning Radar and
+seeded-incident replay
+Main differentiator and measurable demo
+P1 — High value
+Evidence-backed alerts and
+owner routing
+Makes outputs actionable and explainable
+P1 — High value
+Regional one-page brief
+Directly matches the requested operational output
+P1 — High value
+Cross-channel fusion and
+deduplication
+Improves incident-level interpretation; deduplication may be staged as a
+stretch if time is tight
+P2 — Stretch
+Root-cause connection graph,
+cross-store patterns
+Adds a compelling investigation layer
+P2 — Stretch
+Human feedback and resolution
+tracker
+Demonstrates operational learning and follow-through
+P2 — Stretch
+Action impact simulator and
+forecasting
+Useful only after core detection is reliable
+5. Next Steps & Recommendations
+5.1 Recommended final product definition
+StoreSignal AI is a multilingual retail operations early-warning system that fuses customer and staff feedback,
+detects emerging and high-risk incidents, explains alerts with source evidence, routes actions to the correct
+teams, and tracks follow-through.
+5.2 What to prioritize for selection
+  Prove one end-to-end scenario. A reliable flow is more convincing than many disconnected features.
+  Make early detection measurable. Report lead time for the three seeded incidents and show the replay timeline.
+  Demonstrate safety policy explicitly. A low-volume allergen, hygiene, or misconduct signal should still trigger the
+ policy-defined escalation.
+
+
+===== PAGE 10 =====
+StoreSignal AI | Project Report
+Page 10
+ Show why the alert exists. Display source snippets, contributing channels, timing, and the rule or trend that triggered
+ it.
+ Be honest about performance. Distinguish real model results from illustrative UI values.
+  Include a baseline comparison. Compare the proposed system with a simple volume threshold or basic
+ sentiment/classification baseline where possible.
+ Make failure modes visible. Show uncertainty, low-confidence review, missing exposure denominators, and
+ false-alert monitoring.
+ Use the graph as a supporting feature, not a substitute for evidence. It should help people inspect relationships
+ rather than claim unverified causation.
+5.3 Key technical recommendations
+  Begin with a simple, reproducible baseline before adding complex models.
+  Keep statistical predictions, trend detection, and policy escalation as distinct components.
+  Use time-aware evaluation for incident detection and avoid data leakage from duplicate or future records.
+  Use exposure-normalized rates when credible denominators exist; otherwise document the proxy and its limitations.
+  Preserve raw source records and provenance so every alert is auditable.
+  Keep a human in the loop for consequential safety, compliance, and staff-related decisions.
+  Generate summaries only from structured, evidence-backed findings.
+  Do not use hidden evaluation labels to train, tune, or hardcode seeded incidents.
+  Measure error rates across channels and language patterns to identify uneven performance.
+ 
+5.4 Risks and mitigations
+Risk
+Mitigation
+Code-mixed text is misclassified
+Evaluate by language pattern; use multilingual models and targeted normalization
+High-volume stores dominate alerts
+Normalize by exposure where possible and use store-specific baselines
+A severe low-volume issue is
+missed
+Independent mandatory-risk policy layer and manual safety-case testing
+Duplicate records inflate trends
+Deduplicate or group likely duplicates while retaining provenance
+AI invents a cause or action
+Ground explanations in retrieved evidence; label hypotheses clearly
+Too many false alarms
+Track precision and false alerts per week; tune on permitted validation data
+Demo metrics are mistaken for
+results
+Clearly label simulated data and show only measured evaluation metrics as real
+Root-cause graph overstates
+correlation
+Explain link evidence and distinguish candidate relationships from confirmed causes
+5.5 Suggested hackathon demo script
+  Opening: “Retailers collect thousands of customer and employee messages, but the important signal is often
+ fragmented across channels.”
+ Show the data: A customer review, a staff shift note, and another complaint that appear unrelated.
+  Show fusion: StoreSignal connects them as a candidate incident and displays the evidence.
+  Show early warning: Replay the timeline and indicate when the alert would have triggered.
+  Show safety logic: Demonstrate that a policy-defined high-risk report escalates even when volume is low.
+  Show action: Display the owner, next step, and resolution workflow.
+  Show proof: Present actual evaluation metrics and lead time from the evaluation script.
+ 
+
+===== PAGE 11 =====
+StoreSignal AI | Project Report
+Page 11
+ Close: “StoreSignal turns scattered store chatter into earlier, explainable, and accountable action.”
+ 
+5.6 Final recommendation
+Build the smallest version that can reliably demonstrate the complete chain: multilingual classification,
+emerging-issue detection, mandatory-risk escalation, evidence-backed routing, and a regional brief. Add the
+root-cause graph and action simulator only after that chain works.
+The winning message is not “we use AI on feedback.” It is: “We detect weak signals across store channels,
+explain why they matter, escalate risk regardless of volume, and help teams act before the problem spreads.”
+Appendix A — Minimum demo acceptance checklist
+ ■ All four channel types are represented or their absence is documented.
+ ■ Store master and issue taxonomy are loaded and validated.
+ ■ Classification, severity, and actionability outputs are reproducible.
+ ■ Mandatory-risk categories are escalated independently of volume.
+ ■ The three seeded incidents are evaluated without hardcoding or hidden-label leakage.
+ ■ Early-warning lead time and false-alert behavior are reported.
+ ■ Alerts display supporting source evidence and uncertainty.
+ ■ Owner routing uses the supplied taxonomy/store master.
+ ■ Regional brief is concise, evidence-backed, and exportable.
+ ■ Simulated UI data is clearly labeled.
+ ■ Demo can be reset and repeated from documented steps.
+ 
+Appendix B — Terminology
+  Actionability: Whether a record indicates a practical issue that merits a response.
+  Emerging issue: An issue whose recent rate or pattern is unusual relative to an appropriate baseline.
+  Incident fusion: Grouping records that may refer to the same underlying operational event.
+  Lead time: How long before a reference point the system first detects a seeded incident, according to the evaluation
+ definition.
+ Mandatory-risk escalation: Policy-driven escalation for designated safety or conduct categories regardless of
+ volume.
+ Store master: Reference data linking store IDs to attributes such as region and other available operational metadata.
+  Evidence-backed alert: An alert whose explanation points to the source records and measurable signals that
+ triggered it.

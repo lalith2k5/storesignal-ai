@@ -1,0 +1,30 @@
+# Semantic safety net prototypes: short sentences per safety category in
+# English, Hinglish and romanized Tamil/Marathi. Records with a very high
+# cosine similarity to these prototypes but no regex hit go to the review
+# queue as 'possible risk (semantic)'. They are never auto-escalated.
+categories:
+  allergen:
+    - my son had an allergic reaction after eating this product
+    - packet said nut free but there were peanuts inside
+    - label did not mention the allergen and my daughter got hives
+    - product me allergy wala ingredient tha par label pe nahi likha
+    - packet pe nut free likha tha par peanuts the
+    - label la mention pannala, allergy aagiduchu
+  food_hygiene:
+    - I saw pests near the food section
+    - the food area looked unhygienic and smelled bad
+    - khana section me keede makode dikhe
+    - bakery ke paas badbu aa rahi thi aur makkhi thi
+    - sapadu area romba ganda ah irundhuchu, poochi irundhuchu
+  staff_misconduct:
+    - a staff member behaved inappropriately with a customer
+    - the cashier harassed me at the counter
+    - staff ne gaali dekar dhakka diya
+    - billing staff galat tareeke se baat kiya
+    - staff romba misbehave pannanga, apasabdam pesinanga
+  physical_safety:
+    - the floor was wet and someone could slip and get hurt
+    - there was a live wire near the billing counter
+    - store me jagah jagah paani gira tha aur koi board nahi
+    - wire khula pada tha aur chingari nikal rahi thi
+    - floor la water irundhuchu, vizhundhuruven nu bayam

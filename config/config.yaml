@@ -1,0 +1,58 @@
+# StoreSignal AI — main configuration.
+# Every threshold here is a starting value. Tune on your own dev set and
+# synthetic injection trials, never on hidden evaluation labels.
+data_mode: synthetic
+timezone: Asia/Kolkata     # assumption for timestamps without an offset; confirm with organizers
+seed: 42
+paths: {raw: data/raw, interim: data/interim, processed: data/processed, reports: reports}
+embedding_model: intfloat/multilingual-e5-small
+embedding_prefix: 'query: '
+offline_embeddings: false  # true once the model is cached; export HF_HUB_OFFLINE=1 to force offline
+
+classifier: {C: 4.0, emb_weight: 1.0, tau: 0.55, max_features: 300000, solver: lbfgs}
+weak: {w_kw: 1.0, w_emb: 2.0, temp: 50, min_conf: 0.35, cap_per_class: 4000}
+dedupe:
+  win_h: 72
+  cos_dup: 0.94
+  fuzz_dup: 86
+  incident_gap_h: 72
+  max_span_h: 240
+semantic: {percentile: 99.5}
+radar:
+  window_days: 3
+  lookback_days: 28
+  warmup_days: 14
+  k_min: 3
+  p_thr: 0.001
+  ratio_min: 3.0
+  alpha: 50
+  phi: 1.3
+  mu_min: 0.3
+  cooldown_days: 7
+  min_conf: 0.35
+baselines:
+  b1_topn: 5          # B1 national volume: issue in weekly top-N
+  b2_z: 3.0           # B2 raw store z-score threshold
+  b3_k: 5             # B3 fixed threshold: k reports of one issue at one store in ...
+  b3_days: 7          # ... this many days
+brief:
+  weeks: 4            # how many past weeks to render per region
+  top_n: 5
+  quote_chars: 140
+evaluate:
+  predictions_path: reports/predictions_for_eval.csv
+  detections_path: reports/detections_for_eval.csv
+  # Right-hand names are placeholders until the organizers' evaluate.py is seen.
+  prediction_columns: {record_id: record_id, issue: issue_type, severity: severity, actionable: actionable}
+  detection_columns: {store_id: store_id, issue: issue_type, detected_at: detected_at}
+demo:
+  replay_alert_id: "E-S09-staff_misconduct-202605152258"
+synth:
+  days: 120
+  n_stores: 50
+  start: '2026-05-01'
+  decoy_store: 'S09'
+  incidents:
+    - {store: 'S07', issue: 'cold_chain_failure', start: 80, len: 6, per_day: 2.5, ramp: true,  channels: ['review', 'staff_note', 'call']}
+    - {store: 'S21', issue: 'allergen_mislabel',   start: 92, len: 5, per_day: 0.8, ramp: false, channels: ['app', 'review']}
+    - {store: 'S34', issue: 'rude_service',        start: 95, len: 7, per_day: 2.5, ramp: false, channels: ['app', 'review']}

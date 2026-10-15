@@ -1,0 +1,4 @@
+model,dev_macro_f1
+M1-tfidf,0.9657
+M2-emb,0.9226
+M3-hybrid,0.9678

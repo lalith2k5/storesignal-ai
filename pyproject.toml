@@ -1,0 +1,12 @@
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'storesignal'
+version = '0.1.0'
+description = 'StoreSignal AI — multilingual retail early-warning and incident-resolution intelligence (R5)'
+requires-python = '>=3.10'
+
+[tool.setuptools.packages.find]
+where = ['src']

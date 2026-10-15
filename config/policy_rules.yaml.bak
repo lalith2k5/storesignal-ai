@@ -1,0 +1,29 @@
+# Mandatory-risk policy rules. A pattern is matched as a whole word.
+# A trailing * means 'starts with'. The transliterated words are starter
+# lists: confirm against real data and a native speaker, then extend.
+categories:
+  allergen:
+    owner: Supply Chain
+    cc: [Store Ops]
+    severity_floor: critical
+    escalation: Same-day human review by the owner. Store Ops checks shelf stock and labels. Pull the batch if confirmed.
+    patterns: [allerg*, allergic*, "nut free", "contains nuts", peanut*, gluten, "veg label", "non veg", mislabel*, "wrong label", rash, swelling, hives, khujli, sujan]
+  food_hygiene:
+    owner: Store Ops
+    cc: []
+    severity_floor: high
+    escalation: Review within 24 hours. Inspect the area, record findings, escalate to the owner if confirmed.
+    patterns: [cockroach*, insect*, rat, mouse, chuha, keeda, poochi, worm*, fungus, mould, mold, expired, expiry, baasi, stale, rotten, badbu, "bad smell", vomit*, ulti, vaanthi, "food poisoning", unhygienic, unclean, "not clean"]
+  staff_misconduct:
+    owner: HR
+    cc: [Store Ops]
+    severity_floor: high
+    escalation: HR reviews within 24 hours. The store manager is informed. Record the outcome.
+    patterns: [abus*, gaali, badtameez*, shouted, chilla*, misbehav*, harass*, inappropriat*, discriminat*, bribe, ghoos, threatened, "touched me"]
+  physical_safety:
+    owner: Store Ops
+    cc: []
+    severity_floor: high
+    escalation: Same-day check of the area. Remove the hazard. Log any injury.
+    patterns: [slipped, "wet floor", "fell down", injur*, "short circuit", spark*, "electric shock", "current laga", fire, "broken glass", "glass broken"]
+negation_cues: [no, not, never, without, nahi, nahin, nako, illai, zero, "didn't", "doesn't", "wasn't", "won't"]

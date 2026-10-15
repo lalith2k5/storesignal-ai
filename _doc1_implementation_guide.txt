@@ -1,0 +1,1848 @@
+StoreSignal AI — Complete End-to-End Implementation Guide
+Voice-of-Store Engine (R5: Turning Store Chatter Into Action) · written for a beginner on a MacBook M2 · free and open-source stack only · 15 October 2026
+0. How to use this document
+This guide has 23 sections (Sections 21–23 add the demo-first plan for the screen recording, the final-day plug-in runbook and complete specifications for every remaining module). Read Sections 1–3 once to understand what you are building and why each decision was made. Do Sections 4–5 today (setup). Then build module by module in the order given in Section 16. Every module section follows the same pattern: purpose → design → code → tests → ‘Done when’ criteria.
+Honest limits you should know up front
+I have not seen the real 40k records, the taxonomy file, the store master, or the organizers’ evaluate.py. Everything that depends on them is isolated in four files and marked ⚠ DATA-DEPENDENT: adapters.py, taxonomy.yaml, routing.yaml, evaluate_adapter.py. Once you share the real files, those four are finalized quickly and the rest of the system does not change.
+Run-times, thresholds and hour estimates are starting values, not measured results. You tune them on your own data (Section 9.3).
+The Hinglish, Tamil and Marathi word lists are starter lists. Verify and extend them from your data (ideally with a native speaker).
+The UI must never present simulated numbers as real results. Every synthetic number is labelled.
+1. Deep analysis of the problem
+1.1 What is actually being asked
+1.2 Where the points are won (and lost)
+Only two things are scored automatically: classification quality and detection lead time. The organizers say lead time is where teams differentiate, so the radar (Section 9) gets the most engineering care.
+The detector must be causal. At time t it may only use records with timestamp ≤ t. Using future data would inflate lead time and is meaningless operationally. Section 9 builds a replay-style detector and Section 17 has a test that proves causality.
+‘Small in absolute volume but rising sharply at one store’ means each store must be compared with its own history. A national top-N list only fires after the damage is done.
+Raw counts mislead because stores differ hugely in size. Normalize by exposure. No visit or transaction counts are promised, so use a documented proxy: the store’s own total feedback volume.
+Safety, allergen, hygiene and staff-misconduct mentions are high-severity by policy regardless of volume. That must live in a rule layer that no model score and no deduplication step can suppress.
+Those rules fight the precision statement: a keyword rule fires on harmless text such as ‘no cockroach, very clean’. Resolution: two escalation tiers that are measured separately (Section 13.3).
+Feedback is unverified: one angry review is not a systemic issue. Trend alerts need a minimum number of unique reports. Policy alerts are labelled ‘needs human review, unverified’.
+Labels are hidden, so you cannot train or tune on them. The first thing to check is whether the package includes any labeled training sample. Your entire classification strategy depends on the answer (Section 7.3).
+1.3 Hard problems and the decision taken
+1.4 Day-1 discovery checklist (answer before coding)
+Files, columns and encodings of the four channels and the store master. Which column joins a record to a store?
+Timestamp format and time zone, date range, and whether there is a time of day or only a date.
+Is any labeled sample given to developers (size, columns)? Or do labels exist only inside evaluate.py?
+Taxonomy fields: issue ids and names, owner function, any default severity, any mandatory-risk flag.
+The severity scale and the exact definition of ‘actionable’.
+How evaluate.py is called, which prediction and detection files it expects, and how lead time and its reference point are defined.
+Duplicate rate, truncation rate, share of each language pattern, and the distribution of records per store.
+Whether product, supplier, batch or equipment identifiers exist anywhere.
+Write the answers in docs/data_dictionary.md. Section 6 shows the data-quality script that answers most of these automatically.
+2. Product definition, scope and architecture
+2.1 Final definition
+StoreSignal AI is a multilingual retail early-warning system. It fuses customer and staff feedback from four channels, detects emerging and high-risk incidents, explains every alert with source evidence, routes it to the owning function, tracks follow-through, and writes a weekly one-page brief per region.
+2.2 Scope: build the chain first
+P0 (foundation): ingestion, normalization, classifier, policy guardrail, early-warning radar, evaluation.
+P1 (high value): deduplication and fusion, evidence-backed alerts, routing, regional brief, Streamlit UI.
+P2 (stretch): root-cause graph, resolution tracker, feedback loop, forecasting, action-impact simulator.
+Rule: do not start P2 until the chain from raw files to a regional brief works on your data. A reliable single flow beats many disconnected features.
+2.3 Architecture
+ 4 raw channels + store master + taxonomy
+            │
+            ▼
+   [1 INGEST + VALIDATE] ─► records.parquet (+ quarantine, data-quality report)
+            │
+            ▼
+   [2 NORMALIZE + PII MASK + LANGUAGE-PATTERN TAG]
+            │
+   ┌────────┼───────────────────────┐
+   ▼        ▼                       ▼
+ [3 CLASSIFIER]  [4 POLICY ENGINE]  [5 EMBEDDINGS]
+ issue/severity/  (rules, runs on       │
+ actionable/      every record,         ▼
+ uncertainty      independent)    [6 DEDUPE + FUSION]
+   │               │                    │
+   └───────┬───────┘                    │
+           ▼                            │
+   [7 EARLY-WARNING RADAR]  ◄───────────┘
+   causal, store × issue, exposure-aware
+           ▼
+   [8 ALERT BUILDER + ROUTING] ─► SQLite tracker (Detected→Reviewed→Assigned→Action→Resolved)
+           ▼
+ [9 REGIONAL BRIEF]   [10 EVALUATION]   [11 STREAMLIT UI + REPLAY]
+2.4 Data artifacts (what each stage writes)
+2.5 Design principles
+Raw data is immutable. Every derived file can be rebuilt with one command.
+Three separate mechanisms: classifier (statistics), policy (rules), radar (trend). None can switch off another.
+Everything is explainable: every alert stores the rule or the numbers that triggered it and the IDs of its source records.
+Simple first: logistic regression and a Poisson test before anything fancy.
+Honest labelling: synthetic, estimated and measured values are visibly different.
+A human stays in the loop for safety, compliance and staff-conduct decisions.
+3. Tech stack (all free, all run locally on the M2)
+Deliberately not used: paid APIs, cloud services, Kafka or Spark, GPU fine-tuning, React. Total cost: zero.
+Notes
+The first run downloads about 0.5 GB for the embedding model. After that it works offline.
+Embedding 40k short texts on an M2 is an estimate of 5–15 minutes on CPU, faster on MPS. It runs once and is cached to embeddings.npy.
+multilingual-e5 models expect the prefix query:  in front of each text. Add it in embed.py (Section 6).
+Why both TF-IDF and embeddings: embeddings capture meaning across languages, char n-grams capture romanized spellings the embedding model has never seen. The hybrid is the recommended model.
+4. Environment setup on your MacBook M2
+Step 1. Open Terminal (Cmd+Space, type Terminal, Enter). Every command below is typed there.
+Step 2. Developer tools and Homebrew
+xcode-select --install
+Then install Homebrew from brew.sh (copy the single install line shown on that page) and run the two ‘Next steps’ lines Homebrew prints at the end, so that brew works in new Terminals.
+Step 3. Python, Git, and the project folder
+brew install python@3.11 git
+python3.11 --version
+mkdir -p ~/projects/storesignal && cd ~/projects/storesignal
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+After source .venv/bin/activate your prompt shows (.venv). Repeat that line in every new Terminal window before working.
+Step 4. Create requirements.txt and install
+pandas
+numpy
+pyarrow
+scipy
+scikit-learn
+sentence-transformers
+torch
+emoji
+rapidfuzz
+pyyaml
+jinja2
+networkx
+pyvis
+plotly
+streamlit
+pytest
+ruff
+tqdm
+joblib
+pip install -r requirements.txt
+pip freeze > requirements.lock.txt
+The lock file records exact versions so your demo can be rebuilt identically.
+Step 5. Verify the install. Create check_env.py:
+import torch, sklearn, pandas, sentence_transformers
+print('torch', torch.__version__, 'mps available:', torch.backends.mps.is_available())
+print('sklearn', sklearn.__version__, 'pandas', pandas.__version__)
+Run python check_env.py. If mps available is False, nothing breaks: the code falls back to CPU.
+Step 6. VS Code
+brew install --cask visual-studio-code
+code .
+Install the extensions Python, Pylance, Jupyter, YAML and Ruff. Press Cmd+Shift+P, choose ‘Python: Select Interpreter’, and pick the one inside .venv.
+Step 7. Make the package importable. Create pyproject.toml:
+[build-system]
+requires = ['setuptools']
+build-backend = 'setuptools.build_meta'
+
+[project]
+name = 'storesignal'
+version = '0.1.0'
+requires-python = '>=3.10'
+
+[tool.setuptools.packages.find]
+where = ['src']
+Then run pip install -e . once. Now import storesignal works everywhere in the project.
+Step 8. Git. Run git init, then create .gitignore containing these lines:
+.venv/
+data/raw/
+models/
+__pycache__/
+*.pyc
+.DS_Store
+Never commit raw organizer data. Commit code, configs and small reports.
+Step 9 (optional). Local LLM for wording polish
+brew install ollama
+ollama pull llama3.2:3b
+The whole system works without it.
+5. Repository structure
+storesignal/
+├── README.md                  run steps, reset steps
+├── Makefile                   one-command targets
+├── requirements.txt / requirements.lock.txt / pyproject.toml
+├── config/
+│   ├── config.yaml            paths, thresholds, seeds
+│   ├── taxonomy.yaml          ⚠ issue → owner, default severity, descriptions, seed keywords
+│   ├── routing.yaml           ⚠ owner, first action, escalation rule, SLA
+│   ├── policy_rules.yaml      mandatory-risk word lists (multilingual)
+│   ├── normalization.yaml     abbreviations, spelling variants
+│   └── entities.yaml          equipment and product gazetteer
+├── data/
+│   ├── raw/                   organizer files, never edited
+│   ├── interim/  processed/   rebuilt by the pipeline
+│   ├── labels_dev/            your own hand-labelled dev set
+│   └── synthetic/             generated demo data, always labelled SYNTHETIC
+├── models/                    trained classifier files
+├── reports/                   metrics.json, eval_log.csv, briefs/, figures/
+├── docs/                      data_dictionary.md, decisions.md
+├── src/storesignal/
+│   ├── config.py   adapters.py ⚠   ingest.py   normalize.py   langid.py   pii.py
+│   ├── embed.py    weak_labels.py  classify.py  policy.py
+│   ├── dedupe.py   fuse.py         radar.py     alerts.py   routing.py   tracker.py
+│   ├── brief.py    metrics.py      evaluate_adapter.py ⚠   synth.py    cli.py
+├── app/
+│   ├── Home.py                    Command Center
+│   └── pages/                     1_Radar.py  2_Incidents.py  3_Brief.py  4_Trust.py  5_Label_Tool.py
+├── tests/
+└── notebooks/                     exploration only, nothing the pipeline depends on
+The ⚠ files are the only ones that change when the real organizer files arrive.
+6. Data layer: ingestion, normalization, language tags, synthetic data
+6.1 Unified record schema
+Rule: a record with a missing store or timestamp is kept and still classified and policy-scanned. It is only excluded from store-level trend detection. Only empty text and duplicate record ids go to quarantine.
+6.2 Config, adapters and ingestion ⚠
+config.py loads the YAML once for every module:
+# src/storesignal/config.py
+from pathlib import Path
+import yaml
+
+ROOT = Path(__file__).resolve().parents[2]
+cfg = yaml.safe_load(open(ROOT / 'config' / 'config.yaml', encoding='utf-8'))
+adapters.py is the only place that knows the organizers’ file and column names. The names below are placeholders: open the real files and change them.
+# src/storesignal/adapters.py   ⚠ DATA-DEPENDENT
+CHANNELS = {
+    'review':     {'file': 'online_reviews.csv',   'map': {'review_id': 'source_id', 'date': 'ts', 'store': 'store_id', 'text': 'text_raw', 'stars': 'rating'}},
+    'app':        {'file': 'app_comments.csv',     'map': {'id': 'source_id', 'created_at': 'ts', 'store': 'store_id', 'comment': 'text_raw', 'rating': 'rating'}},
+    'staff_note': {'file': 'staff_notes.csv',      'map': {'note_id': 'source_id', 'time': 'ts', 'store': 'store_id', 'note': 'text_raw'}},
+    'call':       {'file': 'call_transcripts.csv', 'map': {'ticket_id': 'source_id', 'opened': 'ts', 'store': 'store_id', 'transcript': 'text_raw'}},
+}
+STORE_MASTER = {'file': 'store_master.csv', 'map': {'store': 'store_id', 'region_name': 'region'}}
+# src/storesignal/ingest.py
+import json
+import pandas as pd
+from pathlib import Path
+from .adapters import CHANNELS, STORE_MASTER
+from .config import cfg, ROOT
+
+def load_channel(name, spec, raw):
+    df = pd.read_csv(raw / spec['file'], dtype=str, encoding='utf-8', encoding_errors='replace')
+    df = df.rename(columns=spec['map'])
+    for c in ['source_id', 'ts', 'store_id', 'text_raw', 'rating']:
+        if c not in df:
+            df[c] = None
+    df['channel'] = name
+    df['record_id'] = name + '-' + df['source_id'].astype(str)
+    df['ts'] = pd.to_datetime(df['ts'], errors='coerce')        # if values carry offsets add utc=True
+    if df['ts'].dt.tz is None:
+        df['ts'] = df['ts'].dt.tz_localize(cfg['timezone'], nonexistent='shift_forward', ambiguous='NaT').dt.tz_convert('UTC')
+    df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+    return df[['record_id', 'channel', 'ts', 'store_id', 'text_raw', 'rating']]
+
+def run():
+    raw = ROOT / cfg['paths']['raw']
+    df = pd.concat([load_channel(n, s, raw) for n, s in CHANNELS.items()], ignore_index=True)
+    stores = pd.read_csv(raw / STORE_MASTER['file'], dtype=str).rename(columns=STORE_MASTER['map'])
+    df = df.merge(stores[['store_id', 'region']], on='store_id', how='left')
+    df['text_raw'] = df['text_raw'].fillna('').astype(str)
+    df['has_store'] = df['region'].notna()
+    df['has_ts'] = df['ts'].notna()
+    reason = pd.Series('', index=df.index)
+    reason[df['text_raw'].str.strip() == ''] = 'empty_text'
+    reason[df['record_id'].duplicated(keep='first')] = 'duplicate_record_id'
+    good, bad = df[reason == ''].copy(), df[reason != ''].assign(reason=reason[reason != ''])
+    out = ROOT / cfg['paths']['interim']
+    out.mkdir(parents=True, exist_ok=True)
+    good.to_parquet(out / 'records.parquet')
+    bad.to_parquet(out / 'quarantine.parquet')
+    report = {
+        'rows_per_channel': good['channel'].value_counts().to_dict(),
+        'quarantined': bad['reason'].value_counts().to_dict(),
+        'missing_ts_pct': round(100 * (~good['has_ts']).mean(), 2),
+        'missing_store_pct': round(100 * (~good['has_store']).mean(), 2),
+        'date_range': [str(good['ts'].min()), str(good['ts'].max())],
+        'records_per_store': good.groupby('store_id').size().describe().round(1).to_dict(),
+        'exact_duplicate_text_pct': round(100 * good.duplicated(['store_id', 'text_raw']).mean(), 2),
+        'text_len_by_channel': good.groupby('channel')['text_raw'].apply(lambda s: s.str.len().describe().round(1).to_dict()).to_dict(),
+    }
+    json.dump(report, open(out / 'data_quality.json', 'w'), indent=2, default=str)
+    print(json.dumps(report, indent=2, default=str))
+Run it, read data_quality.json, and use it to answer items 1, 2, 7 of the Day-1 checklist. If data_mode in config is synthetic, the pipeline reads data/synthetic/records.parquet instead and skips this step.
+6.3 Normalization (keep signals, never erase negation)
+Rules: keep raw text; keep negation words (not, nahi, illai, nako); never drop stop words; turn emojis into tokens instead of deleting them; shrink elongations but keep the emphasis (sooooo becomes soo); map spelling variants to one canonical form; no translation.
+# src/storesignal/normalize.py
+import re, unicodedata, emoji, yaml
+from .config import ROOT
+
+_N = yaml.safe_load(open(ROOT / 'config' / 'normalization.yaml', encoding='utf-8'))
+_ABBR = _N['abbreviations']
+_VAR = {v: canon for canon, vs in _N['variants'].items() for v in vs}
+_REPEAT = re.compile(r'(.)\1{2,}')
+_TOKEN = re.compile(r'[\w\']+|[^\w\s]')
+
+def normalize(text):
+    t = unicodedata.normalize('NFKC', str(text))
+    t = emoji.demojize(t, delimiters=(' emoji_', ' '))      # an angry-face emoji becomes the token emoji_enraged_face
+    t = _REPEAT.sub(r'\1\1', t.lower())
+    out = []
+    for w in _TOKEN.findall(t):
+        w = _VAR.get(w, w)
+        out.append(_ABBR.get(w, w))
+    return ' '.join(out)
+Starter config/normalization.yaml (extend it from your data):
+abbreviations:
+  plz: please
+  pls: please
+  frzr: freezer
+  frz: freezer
+  mgr: manager
+  cust: customer
+  bcoz: because
+  cuz: because
+variants:            # canonical: [spellings seen in the data]
+  nahi: [nahin, nhi, nai, nahee]
+  kharab: [kharaab, kharabb, karab]
+  thanda: [thandaa, thandi, thande]
+  baasi: [basi, baasee]
+  keeda: [keede, kida, kide]
+  ganda: [gandi, gande, gandagi]
+  illai: [illa, illae]
+  romba: [rombha]
+  khup: [khoop, khupach]
+Grow the dictionary from evidence, not guesses: after normalizing, print the 400 most frequent tokens, group the spelling variants by eye, and add them.
+from collections import Counter
+cnt = Counter(w for t in df['text_norm'] for w in t.split())
+print(cnt.most_common(400))
+Truncation. Find the cut-off empirically: if many records in a channel share exactly one length, that length is the cap.
+caps = df.groupby('channel')['text_raw'].apply(lambda s: s.str.len().value_counts().head(3))
+print(caps)                       # a spike at one value, e.g. 160, is the cut-off
+# then: df['is_truncated'] = df['text_raw'].str.len() >= cap_for_channel - 1
+Truncated text is a signal: lower the classifier confidence slightly and never treat a missing ending as a negative.
+6.4 PII masking
+# src/storesignal/pii.py
+import re
+_PHONE = re.compile(r'(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{9}(?!\d)')
+_EMAIL = re.compile(r'[\w.+-]+@[\w-]+\.[\w.-]+')
+_URL = re.compile(r'https?://\S+')
+
+def mask_pii(t):
+    t = _EMAIL.sub('[EMAIL]', t)
+    t = _URL.sub('[URL]', t)
+    return _PHONE.sub('[PHONE]', t)
+If the organizers provide a staff roster, also replace each staff name with [STAFF]. Models and rules read text_norm; people read only text_masked.
+6.5 Language-pattern tag (for slicing metrics only)
+# src/storesignal/langid.py
+import re
+_DEV = re.compile(r'[\u0900-\u097F]')
+_TAM = re.compile(r'[\u0B80-\u0BFF]')
+HI = set('nahi kya hai bahut accha kharab thanda garam paisa wala hain bhi aur'.split())
+TA = set('romba illai nalla mosam enna inga sapadu'.split())
+MR = set('khup aahe ahe kay changla majha'.split())
+
+def lang_pattern(t):
+    if _DEV.search(t) or _TAM.search(t):
+        return 'native_script'
+    w = set(t.split())
+    h, ta, m = len(w & HI), len(w & TA), len(w & MR)
+    if h + ta + m == 0:
+        return 'english'
+    if sum(x > 0 for x in (h, ta, m)) > 1:
+        return 'mixed'
+    return 'hinglish' if h else 'romanized_tamil' if ta else 'romanized_marathi'
+This is a rough heuristic. It exists so Section 13 can report quality per pattern (english, hinglish, romanized_tamil, romanized_marathi, mixed, native_script). It never drives routing.
+6.6 Embeddings
+# src/storesignal/embed.py
+import numpy as np, torch
+from sentence_transformers import SentenceTransformer
+
+def get_model(name='intfloat/multilingual-e5-small'):
+    device = 'mps' if torch.backends.mps.is_available() else 'cpu'
+    return SentenceTransformer(name, device=device)        # if MPS errors, force device='cpu'
+
+def embed(texts, model, batch=64):
+    X = model.encode(['query: ' + t for t in texts], batch_size=batch,
+                     normalize_embeddings=True, show_progress_bar=True)
+    return X.astype('float32')
+Run once on text_norm, save with np.save('data/interim/embeddings.npy', E), and reload afterwards. Rows stay aligned with records_norm.parquet (same order). Because vectors are normalized, cosine similarity is just a matrix product.
+6.7 Synthetic data generator (for development, tests and a fallback demo)
+You will build and debug for days before you trust the real data. This generator makes about 30k records across four channels, 40 stores of different sizes, code-mixed text with typos and emojis, and three planted incidents that are entirely yours (they are not the organizers’ seeded incidents). Everything it creates carries is_synthetic=True, and the UI shows a banner whenever it is used.
+# src/storesignal/synth.py   SYNTHETIC data only. Never present its numbers as real results.
+import json
+import numpy as np, pandas as pd
+from pathlib import Path
+
+rng = np.random.default_rng(42)
+T = {
+    'freezer_failure':   ['freezer not cooling, ice cream melted', 'freezer thanda nahi kar raha, kulfi pighal gayi', 'freezer romba noisy, ice cream melt aayiduchu'],
+    'rude_billing':      ['billing guy was very rude to me', 'billing wale ne badtameezi se baat ki', 'billing counter la romba rude ah pesinanga'],
+    'allergen_mislabel': ['label said nut free but my son had a reaction', 'packet pe nut free likha tha par peanuts the, allergy ho gayi'],
+    'out_of_stock':      ['milk out of stock again', 'bread khatam ho gaya, kal bhi nahi tha'],
+    'long_queue':        ['queue is too long, only one counter open', 'line bahut lambi hai, ek hi counter chalu'],
+    'app_crash':         ['app crashes at checkout', 'app checkout pe hang ho jata hai'],
+    'price_mismatch':    ['shelf price different from bill', 'shelf pe aur bill me alag price'],
+    'dirty_floor':       ['floor was wet and dirty near the entrance', 'floor gandi aur geeli thi'],
+}
+BASE = {'out_of_stock': .30, 'long_queue': .25, 'app_crash': .15, 'price_mismatch': .15,
+        'dirty_floor': .05, 'rude_billing': .04, 'freezer_failure': .03, 'allergen_mislabel': .005}
+INCIDENTS = [
+    {'store': 'S07', 'issue': 'freezer_failure',   'start': 80, 'len': 6, 'per_day': 2.0},
+    {'store': 'S12', 'issue': 'allergen_mislabel', 'start': 90, 'len': 5, 'per_day': 0.8},
+    {'store': 'S03', 'issue': 'rude_billing',      'start': 95, 'len': 7, 'per_day': 1.5},
+]
+
+def noisy(t):
+    if rng.random() < .08 and len(t) > 6:
+        i = int(rng.integers(1, len(t) - 2))
+        t = t[:i] + t[i + 1:]                                  # drop a character (typo)
+    if rng.random() < .15:
+        t += ' ' + str(rng.choice(['😡', '🙁', '!!!', '...']))
+    return t
+
+def style(ch, t):
+    return {'staff_note': 'shift note: ', 'call': 'customer called about: '}.get(ch, '') + t
+
+def make(days=120, n_stores=40, incidents=None):
+    start = pd.Timestamp('2026-05-01', tz='UTC')
+    stores = pd.DataFrame({'store_id': [f'S{i:02d}' for i in range(1, n_stores + 1)],
+                           'region': [['North', 'South', 'West', 'East'][i % 4] for i in range(n_stores)],
+                           'size': rng.choice([0.4, 1.0, 2.5], size=n_stores, p=[.4, .4, .2])})
+    issues = list(BASE)
+    p = np.array(list(BASE.values()))
+    p = p / p.sum()
+    rows = []
+    for d in range(days):
+        for s in stores.itertuples():
+            for _ in range(rng.poisson(6 * s.size)):
+                rows.append((d, s.store_id, str(rng.choice(issues, p=p)), False))
+    for inc in incidents or []:
+        for d in range(inc['start'], inc['start'] + inc['len']):
+            for _ in range(rng.poisson(inc['per_day'])):
+                rows.append((d, inc['store'], inc['issue'], True))
+    out = []
+    for i, (d, s, issue, planted) in enumerate(rows):
+        ch = str(rng.choice(['review', 'app', 'staff_note', 'call'], p=[.3, .3, .2, .2]))
+        ts = start + pd.Timedelta(days=d, minutes=int(rng.integers(0, 1440)))
+        out.append({'record_id': f'{ch}-{i}', 'channel': ch, 'ts': ts, 'store_id': s,
+                    'text_raw': style(ch, noisy(str(rng.choice(T[issue])))),
+                    'rating': float(rng.integers(1, 4)), 'true_issue': issue,
+                    'planted': planted, 'is_synthetic': True})
+    df = pd.DataFrame(out).merge(stores[['store_id', 'region']], on='store_id')
+    return df.sort_values('ts').reset_index(drop=True)
+
+if __name__ == '__main__':
+    Path('data/synthetic').mkdir(parents=True, exist_ok=True)
+    make(incidents=INCIDENTS).to_parquet('data/synthetic/records.parquet')
+    json.dump(INCIDENTS, open('data/synthetic/ground_truth_incidents.json', 'w'))
+The columns true_issue and planted exist only so your own tests can check the system. The pipeline never reads them, which keeps the test honest. Real seeded incidents may ramp up gradually instead of arriving at a constant rate, so Section 9.3 also tests ramps.
+6.8 Splits and leakage rules
+Near-duplicates must stay on one side of any split, so assign dup_group_id (Section 10) first and split by group.
+Classifier: train on pseudo-labels or labeled data, evaluate on your hand-labelled dev set. The dev set is never used for training until the final refit.
+Radar: tune on the first 70% of the timeline using synthetic injection (Section 9.3), then estimate false alerts on the remaining 30%.
+The hidden labels are touched only through evaluate.py, and every run is logged (Section 13.5).
+Done when: data_quality.json exists; per-channel row counts match the raw files; normalize() passes unit tests (idempotent, keeps negation, keeps emoji tokens); the synthetic generator produces a dataset the later stages can read.
+7. Issue classification, severity and actionability (Module B)
+7.1 What to predict
+Issue: one primary category (softmax over the taxonomy), plus a second candidate with its probability. Report the second only if its probability is above a threshold, which gives light multi-label behavior.
+Severity: four levels: low, medium, high, critical.
+Actionability: yes/no, meaning a practical issue someone can check or fix.
+Owner: never predicted. It is looked up from the taxonomy (Section 11).
+Uncertainty: needs_review when confidence is low (Section 7.5). Ambiguous records go to a human instead of being forced into a category.
+7.2 taxonomy.yaml ⚠
+Copy ids, names and owners exactly from the organizers’ taxonomy. You add the description, keywords and examples yourself. That is not a label leak: it is domain knowledge about the categories.
+issues:
+  - id: freezer_failure
+    name: Freezer or cold-chain failure
+    owner: Store Ops                  # one of Store Ops, Supply Chain, Merchandising, Digital, HR
+    default_severity: high            # low, medium, high, critical
+    mandatory_risk: false             # true for allergen, hygiene, safety, misconduct categories
+    description: freezer or fridge not cooling, warm milk, melted ice cream, cold chain broken
+    seed_keywords: [freezer, fridge, chiller, not cooling, melted, thanda nahi]
+    example_texts:
+      - freezer is not cooling and the ice cream melted
+      - fridge ka temperature theek nahi, milk garam tha
+7.3 Which labeling scenario are you in?
+Scenario B, step by step
+Keyword votes: count seed keywords per issue (fast regex).
+Prototype votes: embed each issue’s description and example texts, average them into one prototype vector, and score every record by cosine similarity to each prototype.
+Combine: blend the two into a probability-like score and pseudo-label only the confident records, capped per class so big classes do not dominate.
+Train the hybrid model (Section 7.5) on the pseudo-labels.
+Hand-label about 400 dev records with the Label Tool page (Section 14): roughly 12–15 per category, plus 60 random records and 60 policy hits. Budget 2–3 hours. This is your honest measuring stick.
+Self-train once: predict the unlabeled records, add the confident new predictions, refit.
+Final fit on pseudo-labels plus your dev labels.
+Using evaluate.py to tune the model would be using hidden labels to tune. Run it sparingly on finished candidate models, log each run, and tune on your own dev set instead.
+# src/storesignal/weak_labels.py
+import re
+import numpy as np
+from .embed import embed
+
+def keyword_votes(texts, issues):
+    V = np.zeros((len(texts), len(issues)), dtype='float32')
+    for j, it in enumerate(issues):
+        pat = re.compile(r'\b(?:' + '|'.join(re.escape(k.lower()) for k in it['seed_keywords']) + r')\b')
+        V[:, j] = [len(pat.findall(t)) for t in texts]
+    return V
+
+def prototype_scores(E, model, issues):
+    protos = []
+    for it in issues:
+        P = embed([it['description']] + it.get('example_texts', []), model)
+        c = P.mean(axis=0)
+        protos.append(c / np.linalg.norm(c))
+    return E @ np.stack(protos).T                       # cosine, shape (records, issues)
+
+def softmax(z):
+    z = np.exp(z - z.max(axis=1, keepdims=True))
+    return z / z.sum(axis=1, keepdims=True)
+
+def weak_labels(V, S, w_kw=1.0, w_emb=2.0, temp=50.0):
+    kw = V / (V.sum(axis=1, keepdims=True) + 1e-6)
+    emb = softmax(S * temp)
+    score = (w_kw * kw + w_emb * emb) / (w_kw * (V.sum(axis=1) > 0) + w_emb)[:, None]
+    return score.argmax(axis=1), score.max(axis=1)      # label index, confidence
+Gotcha: e5 cosine similarities all sit in a narrow high band (about 0.7 to 0.9). Use relative scores (softmax with a large temperature, as above), never an absolute cosine cut-off.
+7.4 Model options and how to choose
+Choose by macro-F1 on the dev set, then check the per-channel and per-language slices. If two models are close, take the simpler one. Never choose by model size.
+7.5 Training and prediction code
+# src/storesignal/classify.py
+import numpy as np, pandas as pd, scipy.sparse as sp
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.linear_model import LogisticRegression
+from sklearn.pipeline import FeatureUnion
+
+def make_vectorizer():
+    return FeatureUnion([
+        ('char', TfidfVectorizer(analyzer='char_wb', ngram_range=(2, 5), min_df=3, sublinear_tf=True, max_features=300000)),
+        ('word', TfidfVectorizer(analyzer='word', ngram_range=(1, 2), min_df=2, sublinear_tf=True, token_pattern=r'[\w\']+')),
+    ])
+
+def _stack(vec_out, E, w):
+    return sp.hstack([vec_out, sp.csr_matrix(E * w)]).tocsr()
+
+def fit(texts, E, y, emb_weight=1.0, C=4.0):
+    vec = make_vectorizer()
+    X = _stack(vec.fit_transform(texts), E, emb_weight)
+    clf = LogisticRegression(C=C, max_iter=3000, class_weight='balanced').fit(X, y)
+    return {'vec': vec, 'clf': clf, 'w': emb_weight}
+
+def predict(m, texts, E):
+    P = m['clf'].predict_proba(_stack(m['vec'].transform(texts), E, m['w']))
+    order = np.argsort(-P, axis=1)
+    cls = m['clf'].classes_
+    i1, i2 = order[:, 0], order[:, 1]
+    r = np.arange(len(P))
+    return pd.DataFrame({'issue': cls[i1], 'p1': P[r, i1], 'issue2': cls[i2], 'p2': P[r, i2],
+                         'margin': P[r, i1] - P[r, i2]})
+Uncertainty threshold. On the dev set, sweep τ from 0.3 to 0.9. For each τ compute accuracy on records with p1 >= tau and the share of records kept (coverage). Pick the smallest τ whose accepted accuracy meets your target (start with 0.90). Everything below τ is flagged needs_review = True. Plot accuracy against coverage for the Trust page.
+7.6 Severity and actionability
+Scenario A: train the same hybrid features on the provided severity and actionable labels (one multi-class model, one binary model).
+Scenario B: use transparent rules for severity, and be honest that actionability is the weakest part.
+import pandas as pd
+SEV = {'low': 0, 'medium': 1, 'high': 2, 'critical': 3}
+INTENSITY = ['again', 'everyone', 'children', 'kids', 'baby', 'sick', 'hospital', 'daily', 'since morning']
+
+def severity(issue_default, policy_floor, rating, text_norm):
+    s = SEV[issue_default]
+    if policy_floor:                                    # mandatory-risk categories raise the floor
+        s = max(s, SEV[policy_floor])
+    if any(w in text_norm for w in INTENSITY) or (pd.notna(rating) and rating <= 1):
+        s = min(s + 1, 3)
+    return s
+
+CONCRETE = ['counter', 'aisle', 'freezer', 'fridge', 'shelf', 'floor', 'billing', 'app', 'today',
+            'yesterday', 'morning', 'batch', 'expired', 'label']
+
+def actionable_heuristic(text_norm, p1):
+    return int(len(text_norm.split()) >= 4 and p1 >= 0.5 and any(w in text_norm for w in CONCRETE))
+The actionability heuristic is circular and weak. In Scenario B, hand-label ‘actionable’ on your dev set too, train a small logistic regression on those labels plus the heuristic as one feature, and report its cross-validated score. Do not claim more.
+Done when: a report shows macro-F1 and per-class precision, recall and F1; a confusion matrix; scores sliced by channel and by language pattern; and the accuracy-versus-coverage curve. predictions.parquet is reproducible from a fixed seed.
+8. Safety-first policy engine (Module E)
+This layer runs on every record, before deduplication and before any model threshold. Nothing downstream can switch it off.
+8.1 policy_rules.yaml (starter lists, verify with your data)
+A pattern is matched as a whole word. A trailing * means ‘starts with’, so allerg* matches allergy and allergic. The transliterated words are a starter set from common usage: confirm them against your real text and a native speaker, then extend them.
+categories:
+  allergen:
+    owner: Supply Chain
+    cc: [Store Ops]
+    severity_floor: critical
+    escalation: Same-day human review by the owner. Store Ops checks shelf stock and labels. Pull the batch if confirmed.
+    patterns: [allerg*, allergic*, nut free, contains nuts, peanut*, gluten, veg label, non veg, mislabel*, wrong label, rash, swelling, hives, khujli, sujan]
+  food_hygiene:
+    owner: Store Ops
+    cc: []
+    severity_floor: high
+    escalation: Review within 24 hours. Inspect the area, record findings, escalate to the owner if confirmed.
+    patterns: [cockroach*, insect*, rat, mouse, chuha, keeda, poochi, worm*, fungus, mould, mold, expired, expiry, baasi, stale, rotten, badbu, bad smell, vomit*, ulti, vaanthi, food poisoning, dirty, unhygienic, unclean, not clean]
+  staff_misconduct:
+    owner: HR
+    cc: [Store Ops]
+    severity_floor: high
+    escalation: HR reviews within 24 hours. The store manager is informed. Record the outcome.
+    patterns: [rude, abus*, gaali, badtameez*, shouted, chilla*, misbehav*, harass*, inappropriate, discriminat*, bribe, ghoos, threatened]
+  physical_safety:
+    owner: Store Ops
+    cc: []
+    severity_floor: high
+    escalation: Same-day check of the area. Remove the hazard. Log any injury.
+    patterns: [slipped, wet floor, fell down, injur*, short circuit, spark*, electric shock, current laga, fire, broken glass, glass broken]
+negation_cues: [no, not, never, without, nahi, nahin, nako, illai, zero, didn't, doesn't, wasn't]
+Match the categories to the organizers’ taxonomy owners: the policy owner and the taxonomy owner for the same issue must agree, and the taxonomy is the source of truth.
+8.2 Engine
+# src/storesignal/policy.py
+import re, yaml
+from .config import ROOT
+
+def _compile(p):
+    p = p.lower()
+    if p.endswith('*'):
+        return re.compile(r'\b' + re.escape(p[:-1]) + r'\w*')
+    return re.compile(r'\b' + re.escape(p) + r'\b')
+
+class PolicyEngine:
+    def __init__(self, path=None):
+        spec = yaml.safe_load(open(path or ROOT / 'config' / 'policy_rules.yaml', encoding='utf-8'))
+        self.neg = set(spec['negation_cues'])
+        self.cats = {c: {**v, 'rx': [(_compile(p), p) for p in v['patterns']]} for c, v in spec['categories'].items()}
+
+    def scan(self, text_norm):
+        hits = []
+        for cat, v in self.cats.items():
+            for rx, pat in v['rx']:
+                for m in rx.finditer(text_norm):
+                    before = text_norm[:m.start()].split()[-3:]
+                    after = text_norm[m.end():].split()[:2]      # Hindi, Marathi, Tamil put the negation after the noun
+                    negated = any(w in self.neg for w in before + after)
+                    hits.append({'category': cat, 'pattern': pat, 'span': m.group(0), 'negated': negated})
+        return hits
+8.3 Rules of the road
+Never silence a hit. A record with a non-negated hit is policy_flag. A record whose hits are all negated (for example ‘no cockroach, very clean’) is policy_weak: it goes to a low-priority review queue, it is not deleted and it does not raise an alert by itself.
+Volume is irrelevant. One flagged record creates an alert. Further flagged records for the same store and category within 7 days attach to the same alert as corroborating evidence.
+Dedupe cannot hide a risk. Duplicate groups carry policy_any = True if any member was flagged.
+Honest wording. Policy alerts say ‘needs human review, unverified’, show the matched words and quote the rule’s escalation text.
+Severity floor. The category’s severity_floor is applied in severity() from Section 7.6.
+8.4 Semantic safety net (catches spellings your rules miss)
+Write 10–15 short prototype sentences per safety category in English, Hinglish and romanized Tamil/Marathi. Embed them, score every record by its maximum cosine similarity to those prototypes, and flag records that sit in the top 0.5% of scores and were not caught by a regex. Because e5 cosines are compressed, use that percentile cut-off instead of a fixed number. These go to the review queue as ‘possible risk (semantic)’. They are never auto-escalated.
+8.5 Tests and recall measurement
+# tests/test_policy.py
+from storesignal.policy import PolicyEngine
+
+def test_policy_basics():
+    e = PolicyEngine()
+    assert any(h['category'] == 'allergen' and not h['negated'] for h in e.scan('label said nut free but peanuts inside, allergy ho gayi'))
+    assert all(h['negated'] for h in e.scan('no cockroach found, store very clean') if h['category'] == 'food_hygiene')
+    assert any(h['category'] == 'staff_misconduct' for h in e.scan('billing wale ne badtameezi se baat ki'))
+Recall loop: take every dev record you labeled as a safety issue and check that the regex or the semantic net catches it. List the misses, add two or three pattern variants for each, re-run the tests, and repeat. Never remove a pattern without checking dev precision first.
+Done when: all policy tests pass; you manually reviewed 50 random flags per category and recorded the precision; every dev safety item is caught by the regex or the semantic net (or the miss is documented); a full run on 40k rows finishes in under a minute.
+9. Early-Warning Radar (Module C): the signature feature
+9.1 The idea
+For every store and every issue, ask one question: is the number of unique reports in the last few days unusually high compared with this store’s own history, given how much feedback this store normally receives? Raise an alert the moment the answer becomes yes, using only the data that existed at that moment.
+9.2 The statistical model
+Definitions (all counts are unique report groups after deduplication, Section 10):
+Series: reports of issue c at store s.
+Exposure proxy E: the store’s total unique reports (all issues, all channels) in a window. This is a documented stand-in for footfall. If the organizers supply real visits or transactions, replace E with them and say so.
+Windows: recent window W (default 3 days) and baseline window L (default 28 days) immediately before it.
+k: reports of (s, c) in the recent window.
+Baseline rate: λ = (K_past + α·π_c) / (E_past + α), where K_past is the (s, c) count in the baseline window, E_past is the store total in that window, π_c is the global share of issue c, and α (default 50) is the strength of the prior. This shrinks small or new stores toward the global rate (empirical Bayes) so a store with no history does not flag everything.
+Expected count: μ = max(λ · E_recent · φ, μ_min), with φ = 1.3 as an over-dispersion cushion and μ_min = 0.3 as a floor.
+Tail probability: p = P(Poisson(μ) ≥ k). Ratio = k / μ.
+Fire when k ≥ k_min (3) and p ≤ p_thr (0.001) and ratio ≥ 3 and the warm-up period (14 days) is over.
+Why it behaves well: a large store with ten freezer complaints a week is not alarmed by twelve. A small store that normally has none is alarmed by three. Exposure ties the expected count to the store’s own activity level. The detector is evaluated each time a new report arrives, so it reports the earliest moment it could have fired, which is what lead time rewards.
+Which records feed the radar: unique groups whose top issue has p1 >= min_conf (default 0.35). Policy alerts are a separate mechanism and do not depend on this series.
+# config/config.yaml (radar block)
+radar:
+  window_days: 3
+  lookback_days: 28
+  warmup_days: 14
+  k_min: 3
+  p_thr: 0.001
+  ratio_min: 3.0
+  alpha: 50
+  phi: 1.3
+  mu_min: 0.3
+  cooldown_days: 7
+  min_conf: 0.35
+9.3 Code
+# src/storesignal/radar.py
+from bisect import bisect_right
+from collections import defaultdict
+import pandas as pd
+from scipy.stats import poisson
+
+def _count(lst, lo, hi):
+    return bisect_right(lst, hi) - bisect_right(lst, lo)         # items with lo < t <= hi
+
+def run_radar(df, p):
+    '''df: unique report groups sorted by ts, columns ts, store_id, issue, group_id.
+    p: the radar config dict. Causal: row i is judged using only rows 0..i.'''
+    day = pd.Timedelta(days=1)
+    t0 = df['ts'].min()
+    ev, st, gl, allv = defaultdict(list), defaultdict(list), defaultdict(list), []
+    n_issues = df['issue'].nunique()
+    W, L = p['window_days'], p['lookback_days']
+    open_alerts, alerts = {}, []
+    for row in df.itertuples():
+        t = (row.ts - t0) / day                                  # float days since the first record
+        s, c = row.store_id, row.issue
+        ev[(s, c)].append(t)
+        st[s].append(t)
+        gl[c].append(t)
+        allv.append(t)
+        k = _count(ev[(s, c)], t - W, t)
+        if k < p['k_min'] or t < p['warmup_days']:
+            continue
+        e_rec = _count(st[s], t - W, t)
+        k_past = _count(ev[(s, c)], t - W - L, t - W)
+        e_past = _count(st[s], t - W - L, t - W)
+        pi_c = (_count(gl[c], t - W - L, t - W) + 1) / (_count(allv, t - W - L, t - W) + n_issues)
+        lam = (k_past + p['alpha'] * pi_c) / (e_past + p['alpha'])
+        mu = max(lam * e_rec * p['phi'], p['mu_min'])
+        pval = float(poisson.sf(k - 1, mu))
+        if pval > p['p_thr'] or k / mu < p['ratio_min']:
+            continue
+        a = open_alerts.get((s, c))
+        if a and t - a['last_t'] <= p['cooldown_days']:           # same episode: update, do not re-alert
+            a.update(last_t=t, last_ts=row.ts, k=max(a['k'], k), p_min=min(a['p_min'], pval))
+        else:
+            a = {'store_id': s, 'issue': c, 'first_ts': row.ts, 'first_t': t, 'last_t': t, 'last_ts': row.ts,
+                 'k': k, 'mu': mu, 'ratio': k / mu, 'p_min': pval}
+            open_alerts[(s, c)] = a
+            alerts.append(a)
+    return alerts
+Evidence is not stored inside the radar. Section 11 collects every report of that store and issue between first_ts - W and last_ts.
+9.4 Tuning without hidden labels: synthetic injection
+You do not know how big the seeded incidents are, and you must not peek at them. So you teach the detector what ‘small but rising’ means by planting your own incidents into copies of your own data.
+Calibration period: the first 70% of the timeline (after warm-up). Run the radar on it. Every alert counts as a false alert, which is conservative because some may be real. This gives false alerts per store-week.
+Inject about 100 incidents: random (store, issue) pairs with at least 20 reports of that issue overall; sizes n of 3, 4, 6, 8 reports over 1, 3 or 5 days; both a constant rate and a ramp (intensity increasing over time). Reuse real texts of that issue so the injected text looks real.
+Score: detection rate (an alert for that store and issue between injection start and two days after its end) and median delay in hours from injection start.
+Grid-search window_days ∈ {3, 5, 7}, k_min ∈ {3, 4, 5}, p_thr ∈ {1e-2, 1e-3, 1e-4}, ratio_min ∈ {2, 3, 4}. Save everything to reports/radar_grid.csv.
+Choose the cheapest setting with false alerts at or under 0.05 per store-week (about one per store every 20 weeks) and detection of at least 90% for n=6 over 3 days, then prefer the lowest delay. These targets are starting points. Explain your choice in the demo.
+import numpy as np, pandas as pd
+
+def inject(df, store, issue, start, n, days, ramp, rng):
+    '''Copy of df plus n extra reports of (store, issue) over `days` days from `start` (tz-aware Timestamp).'''
+    pool = df[df['issue'] == issue]
+    u = rng.random(n)
+    offs = np.sort(days * (np.sqrt(u) if ramp else u))              # sqrt(u): more events later = a ramp
+    new = pool.sample(n, replace=True, random_state=int(rng.integers(1_000_000_000))).copy()
+    new['store_id'] = store
+    new['ts'] = start + pd.to_timedelta(offs, unit='D')
+    new['group_id'] = ['inj-%s-%s-%d' % (store, issue, i) for i in range(n)]
+    return pd.concat([df, new]).sort_values('ts').reset_index(drop=True)
+
+def injection_delay_hours(df, store, issue, start, n, days, ramp, params, rng):
+    sl = df[(df['ts'] >= start - pd.Timedelta(days=35)) & (df['ts'] <= start + pd.Timedelta(days=days + 3))]
+    sl = inject(sl, store, issue, start, n, days, ramp, rng)         # slicing keeps each trial fast
+    end = start + pd.Timedelta(days=days + 2)
+    hits = [a for a in run_radar(sl, params) if a['store_id'] == store and a['issue'] == issue and start <= a['first_ts'] <= end]
+    return min((a['first_ts'] - start).total_seconds() / 3600 for a in hits) if hits else None   # None = missed
+Run time: roughly a second per trial, so 100 trials × a 27-point grid is tens of minutes. Use joblib.Parallel or shrink the grid. Your own synthetic planted incidents from Section 6.7 are a second, independent check.
+9.5 Baselines to beat (for the demo and the trust panel)
+B1 national volume: flag an issue when its weekly national count enters the top N.
+B2 raw store z-score: weekly store-issue count against its own mean and standard deviation, no exposure normalization.
+B3 fixed threshold: at least 5 reports of one issue at one store in 7 days.
+Run all three on the injected incidents and on your synthetic planted ones. Report detection rate, median delay and false alerts per store-week next to the radar. Also report ‘days earlier than B1’. That is a measure you control, and it stays meaningful even if you cannot see how evaluate.py defines its reference point.
+9.6 Cross-store pattern transfer
+def link_cross_store(alerts, days=7):
+    pid = {}
+    for c in {a['issue'] for a in alerts}:
+        lst = sorted((a for a in alerts if a['issue'] == c), key=lambda a: a['first_ts'])
+        for i, a in enumerate(lst):
+            for b in lst[i + 1:]:
+                if (b['first_ts'] - a['first_ts']).days > days:
+                    break
+                if b['store_id'] != a['store_id']:
+                    tag = pid.get(id(a)) or 'pat-' + c + '-' + a['first_ts'].strftime('%Y%m%d')
+                    pid[id(a)] = pid[id(b)] = tag
+    for a in alerts:
+        a['pattern_id'] = pid.get(id(a))
+    return alerts
+If supplier, batch or product identifiers exist, require a shared identifier as extra evidence. Label the result ‘multi-store pattern, shared cause unverified’.
+9.7 Forecast (stretch)
+import numpy as np
+
+def forecast_next(daily, h=3):
+    y = np.log1p(np.asarray(daily[-7:], dtype=float))
+    slope, icpt = np.polyfit(np.arange(len(y)), y, 1)
+    return np.clip(np.expm1(icpt + slope * np.arange(len(y), len(y) + h)), 0, None)
+Show it as a dotted line labelled ‘trend estimate, not a confirmed incident’.
+Done when: the causality test in Section 17 passes; on your synthetic data all three planted incidents alert; radar_grid.csv exists with a chosen setting and the reason; the baseline comparison table exists; false alerts per store-week are reported for the calibration period.
+10. Deduplication, incident fusion and the connection graph (Module D)
+10.1 Two different things
+A duplicate is the same message repeated (copy-paste, an app resubmit, one ticket logged twice). Corroboration is different people or channels describing the same event. Duplicates must not inflate counts. Corroboration should raise confidence. The stretch goal ‘appears once’ is met by one incident card that lists all its reports and channels.
+10.2 Three layers
+The radar counts S1+S2 groups. Alerts, briefs and the UI show S3 clusters. The thresholds are starting values: hand-check 50 pairs near each threshold and adjust. Add a family field to taxonomy.yaml (for example cold_chain, billing, safety) so the same event described under two neighboring issues still fuses.
+10.3 Code
+# src/storesignal/dedupe.py
+import hashlib
+import numpy as np, pandas as pd
+from rapidfuzz import fuzz
+
+class UnionFind:
+    def __init__(self, n):
+        self.p = list(range(n))
+    def find(self, x):
+        while self.p[x] != x:
+            self.p[x] = self.p[self.p[x]]
+            x = self.p[x]
+        return x
+    def union(self, a, b):
+        self.p[self.find(a)] = self.find(b)
+
+def assign_groups(df, E, win_h=72, cos_dup=0.95, cos_fuse=0.80):
+    '''df rows align with E (normalized embeddings). df needs store_id, ts, text_norm, family, entities (list).'''
+    n = len(df)
+    dup, inc = UnionFind(n), UnionFind(n)
+    seen = {}
+    for i, (s, t) in enumerate(zip(df['store_id'], df['text_norm'])):
+        h = hashlib.md5((str(s) + '|' + t).encode('utf-8')).hexdigest()
+        if h in seen:
+            dup.union(i, seen[h])
+        else:
+            seen[h] = i
+    texts, fam, ents = df['text_norm'].tolist(), df['family'].tolist(), df['entities'].tolist()
+    for store, idx in df.groupby('store_id').indices.items():
+        idx = idx[np.argsort(df['ts'].values[idx])]
+        hrs = df['ts'].values[idx].astype('datetime64[s]').astype('int64') / 3600.0
+        for a in range(len(idx)):
+            for b in range(a + 1, len(idx)):
+                if hrs[b] - hrs[a] > win_h:
+                    break
+                i, j = idx[a], idx[b]
+                cos = float(E[i] @ E[j])
+                if cos >= cos_dup or fuzz.ratio(texts[i], texts[j]) >= 92:
+                    dup.union(i, j)
+                if fam[i] == fam[j] and (cos >= cos_fuse or set(ents[i]) & set(ents[j])):
+                    inc.union(i, j)
+    out = df.copy()
+    out['dup_group_id'] = ['d%d' % dup.find(i) for i in range(n)]
+    out['incident_cluster_id'] = ['c%d' % inc.find(i) for i in range(n)]
+    return out
+Use fuzz.ratio (edit-distance similarity), not token_set_ratio: the latter scores a short message as identical to a longer one that contains it and would merge different reports.
+Never lose a risk: after grouping, compute policy_any per dup_group_id and per incident_cluster_id (true if any member was policy-flagged), choose the earliest record as canonical, and keep every member linked. Nothing is deleted.
+10.4 Entities (config/entities.yaml)
+equipment: [freezer, fridge, chiller, refrigerator, ac, pos, scanner, trolley, lift, shelf, counter]
+products: [milk, curd, ice cream, bread, eggs, chocolate]
+id_patterns:
+  batch: 'batch\s*#?\s*(\w+)'
+  lot: 'lot\s*#?\s*(\w+)'
+import re
+
+def compile_entities(spec):
+    words = [(w, re.compile(r'\b' + re.escape(w) + r'\b')) for w in spec['equipment'] + spec['products']]
+    ids = {k: re.compile(v) for k, v in spec['id_patterns'].items()}
+    return words, ids
+
+def extract_entities(text_norm, compiled):
+    words, ids = compiled
+    ents = [w for w, rx in words if rx.search(text_norm)]
+    for name, rx in ids.items():
+        m = rx.search(text_norm)
+        if m:
+            ents.append(name + ':' + m.group(1))
+    return ents
+Word boundaries matter: without them ‘ac’ would match inside ‘back’.
+10.5 Root-cause connection graph (stretch)
+Nodes: the possible incident, the store, each report (labelled by channel) and each shared entity. Every edge carries the reason it exists.
+import networkx as nx
+from pyvis.network import Network
+
+def build_graph(inc_id, recs, store_id):
+    '''recs: this incident cluster with record_id, channel, text_masked, entities.'''
+    G = nx.Graph()
+    G.add_node(inc_id, label='Possible incident', color='#d9480f', shape='diamond')
+    G.add_node(store_id, label='Store ' + store_id, color='#1c7ed6')
+    G.add_edge(inc_id, store_id, title='occurred at this store')
+    for r in recs.itertuples():
+        G.add_node(r.record_id, label=r.channel, title=r.text_masked[:200], color='#2f9e44')
+        G.add_edge(inc_id, r.record_id, title='grouped: same store, same issue family, within 72 hours')
+        for e in r.entities:
+            G.add_node('ent:' + e, label=e, color='#f08c00', shape='box')
+            G.add_edge(r.record_id, 'ent:' + e, title='mentions ' + e)
+    return G
+
+def render(G, path):
+    net = Network(height='520px', width='100%', cdn_resources='in_line')
+    net.from_nx(G)
+    net.write_html(path)        # show in Streamlit: components.html(open(path).read(), height=540)
+Caption under every graph: ‘Correlated pattern. A shared cause is a hypothesis until verified.’ Use wording such as ‘possible common refrigeration issue’, never ‘the freezer broke’.
+Done when: exact and near duplicates collapse; one synthetic incident reported through four channels shows as one cluster with channel count 4; policy_any survives grouping; you hand-checked 50 pairs and recorded the error rate.
+11. Alerts, routing, resolution tracker and feedback (Modules F, G, K, L)
+11.1 The alert object
+The confidence label is a transparent rule, not a calibrated probability, and the UI says so: high = at least two channels and (policy match or p ≤ 1e-5); medium = at least two channels or p ≤ 1e-4; otherwise low.
+Explanation text is built from templates, never free-written:
+Emerging: ‘{issue} at store {store}: {k} unique reports in {W} days versus about {mu} expected ({ratio}x, p={p}). Channels: {channels}. Possible common {family} issue, cause not confirmed.’
+Policy: ‘Policy match [{category}] on: {matched words}. {n} report(s) across {n_ch} channel(s). Needs human review, unverified. Escalation rule: {rule}.’
+# src/storesignal/alerts.py
+import pandas as pd
+
+def emerging_alert(a, rec, route, W):
+    lo = a['first_ts'] - pd.Timedelta(days=W)
+    ev = rec[(rec['store_id'] == a['store_id']) & (rec['issue'] == a['issue'])
+             & (rec['ts'] >= lo) & (rec['ts'] <= a['last_ts'])].sort_values('ts')
+    return {
+        'alert_id': 'E-%s-%s-%s' % (a['store_id'], a['issue'], a['first_ts'].strftime('%Y%m%d%H%M')),
+        'tier': 'emerging', 'store_id': a['store_id'], 'issue': a['issue'],
+        'owner': route['owner'], 'cc': route.get('cc', []), 'severity': route['severity'],
+        'alert_ts': a['first_ts'], 'first_signal_ts': ev['ts'].min(),
+        'n_reports': len(ev), 'n_unique': int(ev['dup_group_id'].nunique()),
+        'channels': sorted(ev['channel'].unique()),
+        'why': {'k': a['k'], 'expected': round(a['mu'], 2), 'ratio': round(a['ratio'], 1),
+                'p': a['p_min'], 'window_days': W, 'pattern_id': a.get('pattern_id')},
+        'evidence': ev[['record_id', 'channel', 'ts', 'text_masked']].head(10).to_dict('records'),
+        'action': route['first_action'], 'escalation_rule': route['escalation_rule'],
+    }
+
+def policy_alerts(hits, rec, spec, gap_days=7):
+    '''hits: non-negated policy hits (record_id, category, span). One alert per store, category and episode.'''
+    h = hits.merge(rec[['record_id', 'store_id', 'ts', 'channel', 'text_masked', 'dup_group_id']], on='record_id').sort_values('ts')
+    out = []
+    for (store, cat), g in h.groupby(['store_id', 'category']):
+        cur = []
+        for r in g.itertuples():
+            if cur and (r.ts - cur[-1].ts).days > gap_days:
+                out.append(_policy_alert(store, cat, cur, spec))
+                cur = []
+            cur.append(r)
+        if cur:
+            out.append(_policy_alert(store, cat, cur, spec))
+    return out
+
+def _policy_alert(store, cat, rows, spec):
+    pc = spec['categories'][cat]
+    chans = sorted({r.channel for r in rows})
+    return {
+        'alert_id': 'P-%s-%s-%s' % (store, cat, rows[0].ts.strftime('%Y%m%d%H%M')),
+        'tier': 'policy', 'store_id': store, 'issue': cat, 'owner': pc['owner'], 'cc': pc.get('cc', []),
+        'severity': pc['severity_floor'], 'alert_ts': rows[0].ts,
+        'n_reports': len(rows), 'n_unique': len({r.dup_group_id for r in rows}), 'channels': chans,
+        'why': {'policy_category': cat, 'matched': sorted({r.span for r in rows}), 'corroborated': len(chans) > 1},
+        'evidence': [{'record_id': r.record_id, 'channel': r.channel, 'ts': r.ts, 'text_masked': r.text_masked} for r in rows[:10]],
+        'escalation_rule': 'MANDATORY POLICY [' + cat + ']: ' + pc['escalation'],
+        'note': 'Needs human review. Unverified report.',
+    }
+Alert ids are built from store, issue and first time, so re-running the pipeline produces the same ids and the tracker never creates duplicates.
+11.2 Routing table (config/routing.yaml) ⚠
+Generate a first version from taxonomy.yaml with a short script, then edit it by hand. The owner always comes from the organizers’ taxonomy. SLA hours and first actions are placeholders unless the organizers provide them.
+routes:
+  freezer_failure:
+    owner: Store Ops
+    severity: high
+    first_action: Check the freezer temperature log, move at-risk stock, raise a maintenance ticket
+    escalation_rule: Trend rule - 3 or more unique reports in 3 days at 3x the store baseline. Escalate to Supply Chain if 2 or more stores.
+    sla_hours: 24
+  allergen_mislabel:
+    owner: Supply Chain
+    cc: [Store Ops]
+    severity: critical
+    first_action: Verify the label against the product spec, pull the batch if it mismatches, ask Store Ops to check shelves
+    escalation_rule: MANDATORY - one report triggers same-day human review regardless of volume
+    sla_hours: 4
+default:
+  owner: Store Ops
+  severity: medium
+  first_action: Review the evidence and assign an owner
+  escalation_rule: Standard trend rule
+  sla_hours: 72
+# src/storesignal/routing.py
+SEV = {'low': 0, 'medium': 1, 'high': 2, 'critical': 3}
+
+def route_for(issue, policy_cats, routes, policy_spec):
+    r = dict(routes['routes'].get(issue, routes['default']))
+    for cat in policy_cats:                        # mandatory rules are deterministic and always win
+        pc = policy_spec['categories'][cat]
+        if SEV[pc['severity_floor']] > SEV[r['severity']]:
+            r['severity'] = pc['severity_floor']
+        r['owner'], r['cc'] = pc['owner'], pc.get('cc', [])
+        r['escalation_rule'] = 'MANDATORY POLICY [' + cat + ']: ' + pc['escalation']
+    return r
+Normal categories are configurable through the YAML. A human can override an owner, and the override is recorded with a reason (Section 11.3).
+11.3 Resolution tracker (SQLite)
+CREATE TABLE IF NOT EXISTS alerts (
+  alert_id TEXT PRIMARY KEY, tier TEXT, store_id TEXT, region TEXT, issue TEXT, severity TEXT,
+  owner TEXT, status TEXT DEFAULT 'Detected', alert_ts TEXT, sla_due TEXT, payload_json TEXT);
+CREATE TABLE IF NOT EXISTS events (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, alert_id TEXT, ts TEXT, actor TEXT,
+  from_status TEXT, to_status TEXT, note TEXT);
+CREATE TABLE IF NOT EXISTS feedback (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, alert_id TEXT, ts TEXT, reviewer TEXT, verdict TEXT, note TEXT);
+# src/storesignal/tracker.py
+import json, sqlite3
+import datetime as dt
+
+STATUSES = ['Detected', 'Reviewed', 'Assigned', 'Action taken', 'Resolved']
+now = lambda: dt.datetime.now(dt.timezone.utc).isoformat()
+
+def upsert_alert(con, a, region, sla_hours):
+    due = (a['alert_ts'] + dt.timedelta(hours=sla_hours)).isoformat()
+    con.execute('INSERT OR IGNORE INTO alerts (alert_id, tier, store_id, region, issue, severity, owner, alert_ts, sla_due, payload_json) VALUES (?,?,?,?,?,?,?,?,?,?)',
+                (a['alert_id'], a['tier'], a['store_id'], region, a['issue'], a['severity'], a['owner'],
+                 a['alert_ts'].isoformat(), due, json.dumps(a, default=str)))
+    con.commit()
+
+def set_status(con, alert_id, to_status, actor, note=''):
+    cur = con.execute('SELECT status FROM alerts WHERE alert_id=?', (alert_id,)).fetchone()[0]
+    con.execute('UPDATE alerts SET status=? WHERE alert_id=?', (to_status, alert_id))
+    con.execute('INSERT INTO events (alert_id, ts, actor, from_status, to_status, note) VALUES (?,?,?,?,?,?)',
+                (alert_id, now(), actor, cur, to_status, note))
+    con.commit()
+
+def override_owner(con, alert_id, new_owner, actor, reason):
+    cur = con.execute('SELECT owner, status FROM alerts WHERE alert_id=?', (alert_id,)).fetchone()
+    con.execute('UPDATE alerts SET owner=? WHERE alert_id=?', (new_owner, alert_id))
+    con.execute('INSERT INTO events (alert_id, ts, actor, from_status, to_status, note) VALUES (?,?,?,?,?,?)',
+                (alert_id, now(), actor, cur[1], cur[1], 'owner %s -> %s: %s' % (cur[0], new_owner, reason)))
+    con.commit()
+
+def overdue(con):
+    return con.execute("SELECT alert_id, owner, sla_due FROM alerts WHERE status != 'Resolved' AND sla_due < ?", (now(),)).fetchall()
+Repeat incidents: when a new alert has the same store and issue as a Resolved alert in the last 30 days, store repeat_of = <old alert_id> in its payload and show a ‘repeat’ tag.
+11.4 Human feedback loop
+Reviewers mark each alert correct, incorrect, duplicate, already resolved, or misrouted. The verdict goes to the feedback table with a timestamp and reviewer name. A weekly export lists every incorrect or misrouted alert with its evidence so you can fix a pattern, a threshold or a route by hand. Nothing retrains automatically. Reviewed alerts can be copied into your dev set by hand, with a date.
+Done when: running the alert step on synthetic data creates alerts for all three planted incidents; a second run adds none (idempotent); every alert shows why, evidence, owner and rule text; an owner override writes an event with its reason; the overdue query returns the expected rows.
+12. Regional brief generator (Module H)
+12.1 What one page contains (R5 outputs 1 and 2)
+Header: region, week (Monday to Sunday), data coverage (records, channels, stores reporting).
+Executive summary: three bullets built from counts by a template.
+Top 5 issues: rank, issue, severity, owner, affected stores, trend arrow vs last week, one or two evidence quotes, the stated escalation rule, the next action.
+Safety and compliance box: every open policy alert in the region, not limited to five.
+Emerging signals: alerts opened this week, small-but-rising issues, cross-store patterns.
+Actions due and overdue: from the tracker.
+Data caveats: proxy exposure, share of low-confidence classifications, percent of records missing store or time.
+12.2 Ranking is not raw volume
+Sort key: (has an open policy alert, severity rank, emerging score, share excess, unique reports), all descending. Emerging score is the largest value of -log10(p) among the region’s open alerts for that issue (0 if none). Share excess is this week’s share of the region’s reports for that issue minus its four-week average share. Take the first five. The safety box is separate, so no policy item is ever cut by the top-5 limit.
+12.3 Trend arrow
+def trend(cur, prev, cur_total, prev_total, emerging):
+    if emerging:
+        return '▲▲'                                         # an emerging alert opened this week
+    if prev == 0 and cur >= 3:
+        return 'NEW'
+    sc, sp = cur / max(cur_total, 1), prev / max(prev_total, 1)
+    if sp > 0 and sc / sp >= 1.25 and cur - prev >= 2:
+        return '▲'
+    if sp > 0 and sc / sp <= 0.8 and prev - cur >= 2:
+        return '▼'
+    return '▬'
+Comparing shares, not raw counts, keeps a busy week from looking like a worsening one.
+12.4 Evidence quotes
+Pick up to two reports per issue from different channels, closest to the cluster centroid. Quote the masked text, cut to 140 characters, in its original language, without editing a word.
+import numpy as np
+
+def pick_quotes(rows, E_rows, k=2):
+    c = E_rows.mean(axis=0)
+    c = c / np.linalg.norm(c)
+    order = np.argsort(-(E_rows @ c))
+    chosen, seen = [], set()
+    for i in order:
+        ch = rows.iloc[i]['channel']
+        if ch in seen and len(seen) < rows['channel'].nunique():
+            continue                                           # prefer a new channel first
+        chosen.append(rows.iloc[i])
+        seen.add(ch)
+        if len(chosen) == k:
+            break
+    return [(r['channel'], r['text_masked'][:140]) for r in chosen]
+12.5 Template and export
+# {{ region }} region — week of {{ week_start }}
+Data: {{ n_records }} reports · {{ n_stores }} stores · channels: {{ channels|join(', ') }} · {{ caveat_line }}
+
+## This week
+{% for b in summary %}- {{ b }}
+{% endfor %}
+## Top 5 issues
+| # | Issue | Sev | Owner | Stores | Trend | Evidence | Rule and next action |
+|---|---|---|---|---|---|---|---|
+{% for i in top5 %}| {{ loop.index }} | {{ i.name }} | {{ i.severity }} | {{ i.owner }} | {{ i.stores|join(', ') }} | {{ i.trend }} | {% for ch, q in i.quotes %}{{ ch }}: “{{ q }}” {% endfor %}| {{ i.rule }} — {{ i.action }} |
+{% endfor %}
+## Safety and compliance (policy-triggered, needs human review)
+{% for a in policy %}- {{ a.store_id }} · {{ a.issue }} · {{ a.n_reports }} report(s) · owner {{ a.owner }} · {{ a.escalation_rule }}
+{% endfor %}
+## Emerging signals
+{% for a in emerging %}- {{ a.store_id }} · {{ a.issue }} · {{ a.why.k }} reports vs {{ a.why.expected }} expected ({{ a.why.ratio }}x) · {{ a.channels|join(', ') }}
+{% endfor %}
+## Actions due
+{% for t in due %}- {{ t.alert_id }} · {{ t.owner }} · due {{ t.sla_due }}{% if t.overdue %} · OVERDUE{% endif %}
+{% endfor %}
+## Data caveats
+{% for c in caveats %}- {{ c }}
+{% endfor %}
+Render with Jinja2 to Markdown, convert to HTML with a print stylesheet (@page { size: A4; margin: 12mm }, body 10 pt) so it fits one page, and let the user save a PDF through the browser’s Print dialog. The Streamlit page also offers the Markdown and HTML as downloads.
+The summary bullets come from a facts dictionary computed from the data: number of new alerts split by tier, the issue with the largest emerging score, the number of policy items awaiting review, and overdue actions. Template sentences fill in those numbers, so every number is traceable.
+12.6 Optional wording polish with a local model, and a number checker
+import re, json
+
+def numbers(s):
+    return set(re.findall(r'\d+(?:\.\d+)?', s))
+
+def verify(text, facts):
+    return numbers(text) <= numbers(json.dumps(facts, default=str))      # no number the facts do not contain
+
+def polish(bullets, facts):                                               # optional: pip install ollama
+    import ollama
+    prompt = ('Reword these bullets in plain concise English as bullets without numbering. '
+              'Do not add, remove or change any number, store, cause or action.\n' + '\n'.join(bullets))
+    out = ollama.chat(model='llama3.2:3b', messages=[{'role': 'user', 'content': prompt}])['message']['content']
+    return out if verify(out, facts) else '\n'.join(bullets)             # fall back to the template text
+The model only rewords sentences that are already true. If it invents or changes a number, the checker rejects its output and the template text is used.
+Done when: a brief exists for every region and week; it fits one page; every number passes verify; policy items always appear; trend arrows follow the rules; the caveats section lists the exposure proxy, the low-confidence share and the missing-field rates.
+13. Evaluation and honest reporting (Module M)
+13.1 Connect to the organizers’ evaluate.py ⚠
+Open evaluate.py in VS Code and read its top 60 lines and its main. Write down: (a) the prediction file it reads (columns, id column, severity as words or numbers); (b) what it expects for the three incidents (store, issue, timestamp?); (c) how lead time is computed and relative to which reference point; (d) which labels stay hidden.
+Do not guess its command-line flags. Use the exact command from its README or its argument parser.
+Keep every column name in config so only the config changes:
+evaluate:
+  predictions_path: reports/predictions_for_eval.csv
+  detections_path: reports/detections_for_eval.csv
+  prediction_columns: {record_id: record_id, issue: issue_type, severity: severity, actionable: actionable}
+  detection_columns: {store_id: store_id, issue: issue_type, detected_at: detected_at}
+The right-hand names above are placeholders: replace them with the names evaluate.py really uses.
+# src/storesignal/evaluate_adapter.py   ⚠ DATA-DEPENDENT
+import pandas as pd
+from .config import cfg, ROOT
+
+def export(pred, alerts):
+    e = cfg['evaluate']
+    m = e['prediction_columns']
+    out = pred.rename(columns={'issue': m['issue'], 'severity': m['severity'], 'actionable': m['actionable']})
+    out = out.rename(columns={'record_id': m['record_id']})
+    out[list(m.values())].to_csv(ROOT / e['predictions_path'], index=False)
+    d = e['detection_columns']
+    det = pd.DataFrame([{d['store_id']: a['store_id'], d['issue']: a['issue'], d['detected_at']: a['first_ts'].isoformat()}
+                        for a in alerts if a.get('tier') != 'policy'])
+    det.to_csv(ROOT / e['detections_path'], index=False)
+If evaluate.py wants severity as numbers, convert with the SEV map here. Save its printed output to reports/eval_runs/<timestamp>.txt.
+13.2 Metrics you compute yourself
+# src/storesignal/metrics.py
+import numpy as np
+from sklearn.metrics import f1_score, classification_report
+
+def classification_metrics(y_true, y_pred, meta):
+    y_true, y_pred = np.asarray(y_true), np.asarray(y_pred)
+    out = {'macro_f1': float(f1_score(y_true, y_pred, average='macro')),
+           'weighted_f1': float(f1_score(y_true, y_pred, average='weighted')),
+           'report': classification_report(y_true, y_pred, output_dict=True, zero_division=0)}
+    for col in ['channel', 'lang_pattern']:
+        out['by_' + col] = {g: float(f1_score(y_true[idx], y_pred[idx], average='macro'))
+                            for g, idx in meta.groupby(col).indices.items() if len(idx) >= 20}
+    return out
+
+def ece(conf, correct, bins=10):
+    conf, correct = np.asarray(conf, dtype=float), np.asarray(correct, dtype=float)
+    edges = np.linspace(0, 1, bins + 1)
+    total = 0.0
+    for lo, hi in zip(edges[:-1], edges[1:]):
+        m = (conf > lo) & (conf <= hi)
+        if m.any():
+            total += m.mean() * abs(correct[m].mean() - conf[m].mean())
+    return float(total)
+13.3 The precision statement (R5 output 5)
+Escalated means every alert shown to an owner, in both tiers.
+An alert is truly actionable when at least half of its evidence records are actionable, judged by the organizers’ labels if evaluate.py reports them, otherwise by your own labels.
+Report alert-level precision overall and separately for the policy tier and the emerging tier, plus record-level precision (the share of records inside escalated alerts that are actionable), the sample size, and a 95% Wilson interval.
+Practical tip: alerts are few (probably under 200). After the alert step, label every alert’s evidence yourself in the Label Tool. Those are your own labels, so they are legitimate, and they give a real precision number.
+def wilson(k, n, z=1.96):
+    if n == 0:
+        return (0.0, 0.0)
+    p = k / n
+    d = 1 + z * z / n
+    c = p + z * z / (2 * n)
+    h = z * ((p * (1 - p) / n + z * z / (4 * n * n)) ** 0.5)
+    return ((c - h) / d, (c + h) / d)
+Statement template: ‘Of the N alerts we escalated, X (Y%, 95% interval a–b%) were truly actionable, measured on [source]. Policy tier: .. of .. Emerging tier: .. of ..’. The policy tier is allowed to be lower by design because mandatory rules favor recall. Say so, and show both numbers.
+13.4 Ablation table (fill with measured values only)
+13.5 Honest-reporting rules
+Every evaluate.py run is appended to reports/eval_log.csv with timestamp, git commit and config hash.
+Never tune on hidden-label scores. Tune on your dev set and on synthetic injection.
+Never hardcode the store, issue or dates of the seeded incidents and never filter data around them.
+Final numbers come from a clean run: fresh clone, fresh venv, make all.
+The Trust page shows NOT RUN until a real metrics.json exists. Anything computed on synthetic data carries a SYNTHETIC tag.
+Report weaknesses too: weak slices, missed incidents, false alerts.
+import csv, json, hashlib, subprocess
+import datetime as dt
+
+def log_run(scores, cfg_obj, path='reports/eval_log.csv'):
+    commit = subprocess.run(['git', 'rev-parse', '--short', 'HEAD'], capture_output=True, text=True).stdout.strip()
+    cfg_hash = hashlib.md5(json.dumps(cfg_obj, sort_keys=True, default=str).encode()).hexdigest()[:8]
+    with open(path, 'a', newline='') as f:
+        csv.writer(f).writerow([dt.datetime.now().isoformat(timespec='seconds'), commit, cfg_hash, json.dumps(scores)])
+14. Streamlit UI and the replay simulator (Modules I and N)
+14.1 Pages
+Every page calls banner(), which shows a warning when data_mode is synthetic.
+14.2 Shared loader and Home page
+Store alerts as alerts.json because evidence is nested. records_scored.parquet is the score step’s merged output: records plus text columns, predictions, policy flags and group ids.
+# app/common.py
+import json, sqlite3
+import pandas as pd, streamlit as st
+from storesignal.config import cfg, ROOT
+
+@st.cache_data
+def load():
+    P = ROOT / cfg['paths']['processed']
+    rec = pd.read_parquet(P / 'records_scored.parquet')
+    alerts = json.load(open(P / 'alerts.json', encoding='utf-8'))
+    return rec, alerts
+
+def banner():
+    if cfg.get('data_mode') == 'synthetic':
+        st.warning('SYNTHETIC DEMO DATA. Figures on this page are illustrative, not measured results.')
+
+def con():
+    return sqlite3.connect(ROOT / cfg['paths']['processed'] / 'tracker.sqlite')
+# app/Home.py
+import pandas as pd, streamlit as st
+from common import load, banner, con
+
+st.set_page_config(page_title='StoreSignal AI', layout='wide')
+banner()
+st.title('StoreSignal AI: Command Center')
+rec, alerts = load()
+open_alerts = pd.read_sql("SELECT * FROM alerts WHERE status != 'Resolved'", con())
+now_iso = pd.Timestamp.now(tz='UTC').isoformat()
+
+c1, c2, c3, c4 = st.columns(4)
+c1.metric('Reports (7 days)', int((rec['ts'] >= rec['ts'].max() - pd.Timedelta(days=7)).sum()))
+c2.metric('Open alerts', len(open_alerts))
+c3.metric('Policy items to review', int((open_alerts['tier'] == 'policy').sum()))
+c4.metric('Overdue', int((open_alerts['sla_due'] < now_iso).sum()))
+
+st.subheader('Priority queue')
+rank = {'critical': 3, 'high': 2, 'medium': 1, 'low': 0}
+open_alerts['rank'] = open_alerts['severity'].map(rank)
+q = open_alerts.sort_values(['rank', 'alert_ts'], ascending=[False, False])
+st.dataframe(q[['alert_id', 'tier', 'store_id', 'issue', 'severity', 'owner', 'status']], use_container_width=True)
+
+st.subheader('Recent feedback')
+chans = sorted(rec['channel'].unique())
+sel = st.multiselect('Channel', chans, default=chans)
+st.dataframe(rec[rec['channel'].isin(sel)].sort_values('ts', ascending=False).head(50)[['ts', 'store_id', 'channel', 'issue', 'text_masked']], use_container_width=True)
+Run the app from the project root with streamlit run app/Home.py.
+14.3 Radar page and replay simulator
+Replay is a slider, not a timer loop: it is reliable and the presenter controls the pace.
+# app/pages/1_Radar.py
+import pandas as pd, plotly.graph_objects as go, streamlit as st
+from common import load, banner
+
+banner()
+rec, alerts = load()
+st.title('Early-Warning Radar')
+
+def timeline(a):
+    ev = pd.DataFrame(a['evidence'])
+    ev['ts'] = pd.to_datetime(ev['ts'])
+    ev = ev.sort_values('ts')
+    steps = [(ev['ts'].iloc[0], 'First weak signal (%s)' % ev['channel'].iloc[0])]
+    seen = {ev['channel'].iloc[0]}
+    for r in ev.itertuples():
+        if r.channel not in seen:
+            steps.append((r.ts, 'Report from another channel (%s)' % r.channel))
+            seen.add(r.channel)
+    t_alert = pd.Timestamp(a['alert_ts'])
+    steps.append((t_alert, 'ALERT: severity %s, owner %s' % (a['severity'], a['owner'])))
+    steps.append((t_alert, 'Recommended: ' + a.get('action', a['escalation_rule'])))
+    return sorted(steps, key=lambda s: s[0])
+
+def baseline_fire(ts, k=5, days=7):
+    ts = sorted(ts)
+    for i in range(k - 1, len(ts)):
+        if ts[i] - ts[i - k + 1] <= pd.Timedelta(days=days):
+            return ts[i]
+    return None
+
+labels = ['%s | %s | %s' % (a['alert_id'], a['store_id'], a['issue']) for a in alerts]
+pick = st.selectbox('Incident', labels)
+a = next(x for x in alerts if x['alert_id'] == pick.split(' | ')[0])
+ev = rec[(rec['store_id'] == a['store_id']) & (rec['issue'] == a['issue'])]
+
+daily = ev.set_index('ts').resample('D').size()
+fig = go.Figure(go.Bar(x=daily.index, y=daily.values, name='unique reports per day'))
+t_alert = pd.Timestamp(a['alert_ts'])
+fig.add_shape(type='line', x0=t_alert, x1=t_alert, y0=0, y1=1, yref='paper', line=dict(color='red', dash='dash'))
+st.plotly_chart(fig, use_container_width=True)
+
+steps = timeline(a)
+t0 = steps[0][0]
+span = int((steps[-1][0] - t0).total_seconds() // 3600) + 6
+h = st.slider('Replay: hours since the first related report', 0, span, 0)
+now = t0 + pd.Timedelta(hours=h)
+for t, text in [s for s in steps if s[0] <= now]:
+    st.write('**%s**  %s' % (t.strftime('%d %b %H:%M'), text))
+
+b = baseline_fire(ev['ts'].tolist())
+st.caption('Simple volume rule (5 reports in 7 days) would fire: %s. StoreSignal fired: %s.' % (b if b is not None else 'never', t_alert))
+if st.button('Reset replay'):
+    st.session_state.clear()
+    st.rerun()
+Lead time shown here is your own measure (earlier than a simple rule). The organizers’ lead time comes only from evaluate.py. Never label this page’s number as the official one.
+The Incident Explorer, Brief and Trust pages follow the same pattern: load, filter with Streamlit widgets, render. The brief page calls brief.render(region, week) and offers st.download_button for the Markdown and HTML. The Trust page reads reports/metrics.json and prints NOT RUN for every missing value. The tracker buttons call tracker.set_status, tracker.override_owner and the feedback insert.
+14.4 Label Tool (dev labeling)
+Show the record, never the model’s prediction. Seeing it anchors your judgement and quietly inflates your own accuracy numbers.
+# app/pages/5_Label_Tool.py
+import pandas as pd, streamlit as st, yaml
+from common import load
+from storesignal.config import ROOT
+
+rec, _ = load()
+tax = yaml.safe_load(open(ROOT / 'config' / 'taxonomy.yaml', encoding='utf-8'))
+LAB = ROOT / 'data' / 'labels_dev' / 'dev_labels.csv'
+ids = pd.read_csv(ROOT / 'data' / 'labels_dev' / 'sample_ids.csv')['record_id'].tolist()
+done = set(pd.read_csv(LAB)['record_id']) if LAB.exists() else set()
+todo = [i for i in ids if i not in done]
+st.progress(len(done) / max(len(ids), 1))
+if todo:
+    r = rec[rec['record_id'] == todo[0]].iloc[0]
+    st.write('Channel: %s | Store: %s' % (r['channel'], r['store_id']))
+    st.info(r['text_masked'])
+    issue = st.selectbox('Issue', [i['id'] for i in tax['issues']])
+    sev = st.selectbox('Severity', ['low', 'medium', 'high', 'critical'])
+    act = st.checkbox('Actionable')
+    if st.button('Save and next'):
+        row = pd.DataFrame([{'record_id': r['record_id'], 'issue': issue, 'severity': sev, 'actionable': int(act)}])
+        row.to_csv(LAB, mode='a', header=not LAB.exists(), index=False)
+        st.rerun()
+else:
+    st.success('All sampled records are labelled.')
+Build sample_ids.csv with a short script: 12–15 records per weak-label category (spread across channels), 60 random records, and 60 policy hits.
+14.5 Demo reliability
+Set demo.replay_alert_id in config to the alert you will present and make the Radar page select it by default. make reset-demo clears the tracker and rebuilds alerts so every rehearsal starts from the same state.
+15. Pipeline orchestration and reproducibility
+15.1 config/config.yaml (complete)
+data_mode: real            # real or synthetic
+timezone: Asia/Kolkata     # assumption for timestamps without an offset; confirm with the organizers
+seed: 42
+paths: {raw: data/raw, interim: data/interim, processed: data/processed, reports: reports}
+embedding_model: intfloat/multilingual-e5-small
+classifier: {C: 4.0, emb_weight: 1.0, tau: 0.55}
+weak: {w_kw: 1.0, w_emb: 2.0, temp: 50, min_conf: 0.5, cap_per_class: 3000}
+dedupe: {win_h: 72, cos_dup: 0.95, cos_fuse: 0.80}
+radar: {window_days: 3, lookback_days: 28, warmup_days: 14, k_min: 3, p_thr: 0.001, ratio_min: 3.0, alpha: 50, phi: 1.3, mu_min: 0.3, cooldown_days: 7, min_conf: 0.35}
+evaluate:
+  predictions_path: reports/predictions_for_eval.csv
+  detections_path: reports/detections_for_eval.csv
+  prediction_columns: {record_id: record_id, issue: issue_type, severity: severity, actionable: actionable}
+  detection_columns: {store_id: store_id, issue: issue_type, detected_at: detected_at}
+demo: {replay_alert_id: ''}
+The value tau: 0.55 is a placeholder until you tune it on the dev set (Section 7.5).
+15.2 Pipeline stages
+train.py and score.py are thin glue modules that call the functions in Sections 7–10. Every step module exposes a run() function.
+# src/storesignal/cli.py
+import argparse, importlib
+
+ORDER = ['ingest', 'normalize', 'embed', 'weak_labels', 'train', 'score', 'radar', 'alerts', 'brief', 'evaluate']
+
+def main():
+    ap = argparse.ArgumentParser(prog='storesignal')
+    ap.add_argument('step', choices=ORDER + ['all'])
+    step = ap.parse_args().step
+    for name in (ORDER if step == 'all' else [step]):
+        print('== running', name)
+        importlib.import_module('storesignal.' + name).run()
+
+if __name__ == '__main__':
+    main()
+PY=.venv/bin/python
+
+setup:
+	python3.11 -m venv .venv && .venv/bin/pip install -r requirements.txt && .venv/bin/pip install -e .
+synth:
+	$(PY) -m storesignal.synth
+all:
+	$(PY) -m storesignal.cli all
+app:
+	.venv/bin/streamlit run app/Home.py
+test:
+	.venv/bin/pytest -q
+reset-demo:
+	rm -f data/processed/tracker.sqlite && $(PY) -m storesignal.cli alerts
+Makefile gotcha: every recipe line must start with a TAB character, not spaces, or make stops with ‘missing separator’.
+15.3 Reproducibility checklist
+Seeds come from config. Use np.random.default_rng(cfg['seed']) everywhere and sort records by (ts, record_id) before the radar to break ties.
+Keep requirements.lock.txt in git.
+On every all, copy the config into reports/runs/<timestamp>/config.yaml.
+Final proof: fresh clone, fresh venv, then make setup && make all && make test.
+16. Build plan: order, effort, and ‘done when’
+Hours are estimates for a beginner working with step-by-step help. Commit to git at the end of every phase.
+The total is roughly 70–95 hours.
+If time is short, protect this chain: Phases 0, 1, 3 (M1 only), 4, 6 (basic radar), 8, and a minimal UI with the Radar and Brief pages. Cut, in this order: connection graph, forecast, action simulator, LLM polish, tracker buttons, semantic safety net.
+17. Testing and quality assurance
+# tests/conftest.py
+import pytest
+from storesignal import synth
+
+@pytest.fixture(scope='session')
+def sample_groups():
+    inc = [{'store': 'S03', 'issue': 'freezer_failure', 'start': 45, 'len': 5, 'per_day': 2.0}]
+    df = synth.make(days=60, n_stores=8, incidents=inc).rename(columns={'true_issue': 'issue'})
+    df['group_id'] = df['record_id']
+    return df.sort_values('ts').reset_index(drop=True)
+# tests/test_radar.py
+from storesignal.radar import run_radar
+from storesignal.config import cfg
+
+def keys(alerts, cut=None):
+    return {(a['store_id'], a['issue'], a['first_ts']) for a in alerts if cut is None or a['first_ts'] <= cut}
+
+def test_radar_is_causal(sample_groups):
+    p = cfg['radar']
+    cut = sample_groups['ts'].quantile(0.6)
+    early = run_radar(sample_groups[sample_groups['ts'] <= cut], p)
+    full = run_radar(sample_groups, p)
+    assert keys(early) == keys(full, cut)            # the future must not change the past
+
+def test_radar_finds_planted(sample_groups):
+    alerts = run_radar(sample_groups, cfg['radar'])
+    assert any(a['store_id'] == 'S03' and a['issue'] == 'freezer_failure' for a in alerts)
+Manual QA before the demo
+Review 50 random policy flags per category and record precision.
+Read 100 random classification errors, grouped by slice, and write down the patterns.
+Check 30 random fused clusters by eye.
+Compare one generated brief with the raw records it cites.
+Read 20 alert evidence lists for leaked personal data.
+Acceptance checklist
+☐ All four channels are represented, or any missing one is documented
+☐ Store master and taxonomy load and validate
+☐ Classification, severity and actionability outputs are reproducible from a seed
+☐ Mandatory-risk categories escalate independently of volume (tested)
+☐ The seeded incidents are evaluated with no hardcoding and no hidden-label tuning
+☐ Lead time and false-alert behavior are reported, with the baseline comparison
+☐ Every alert shows evidence, reason, uncertainty, owner, and the stated escalation rule
+☐ Owner routing comes from the organizers’ taxonomy and store master
+☐ The regional brief is one page, evidence-backed and exportable
+☐ The precision statement has a sample size and a confidence interval
+☐ Synthetic data is labelled everywhere it appears
+☐ A clean clone rebuilds everything from documented steps and the demo can be reset
+18. The 3-minute demo and likely questions
+19. Risks and troubleshooting
+20. Stretch roadmap, what is not yet written, and next steps
+Stretch (only after the chain works): action-impact simulator (compare inspection, maintenance escalation or a product-safety procedure by urgency, owner, effort and rationale, with any benefit labelled a scenario estimate); forecast panel (Section 9.7); fine-tuning MuRIL if you collect 2,000 or more real labels; a FastAPI endpoint if judges want an API; Docker.
+What this document does not contain as finished code, so you are not surprised: the glue modules train.py, score.py and the brief renderer brief.py; the Incident Explorer, Brief and Trust pages (the pattern is in 14.3); the semantic safety net (8.4); the script that builds routing.yaml from the taxonomy and the one that builds sample_ids.csv. They follow directly from the patterns shown, and the best way to write them is one at a time with your real data in front of us.
+Next steps
+Do Phase 0 and run check_env.py.
+Send me: the organizers’ evaluate.py (or its first 60 lines and README), the first three rows of each data file, the columns of the store master, the taxonomy file, and whether any labeled sample is provided.
+With those, the four ⚠ files get finalized and you can start Phase 1 on real data.
+After each phase, send me the output and any error and we move to the next.
+21. Demo-first plan: a working screen recording now, real data on the final day
+This section replaces the guide’s default order of work. The organizers will hand over the real dataset, taxonomy, store master and evaluate.py only on the final day. So you build and record the complete system now on synthetic data you generate yourself, and you make the real-data hookup a short, rehearsed checklist. The code blocks in Sections 6–17 are reference implementations for you to type or copy. Section 22 specifies every remaining module so nothing is left undefined.
+21.1 What the recording must prove
+The recording is evidence that the whole chain works end to end. Treat it as a product demo, not a code walkthrough. In one continuous flow it must show:
+Messy multilingual feedback arriving from four channels: a review, an app comment, a staff note and a call transcript, with Hinglish, romanized Tamil or Marathi, typos and emojis.
+Each record classified with issue, severity, actionability and a visible confidence, with low-confidence records sent to a review queue.
+A policy-triggered escalation of one low-volume allergen report, with the rule text on screen.
+An emerging-issue alert at one small store, shown in replay: first weak signal, second channel, alert. Compare it with a simple volume rule.
+One fused incident (several reports, several channels, shown once) with its evidence and connection graph.
+Routing: owner function, severity, escalation rule and SLA; an owner override with a reason; the status moving forward.
+The one-page weekly regional brief: top 5 issues, evidence quotes, affected stores, trend arrows and the safety box.
+The Trust page with the measured values for the synthetic data, tagged SYNTHETIC, the precision statement, the baseline comparison and an honest list of limits.
+One closing sentence saying the same system will be re-run on the organizers’ data on the final day.
+Honesty rule (mandatory). The first frame, the last frame and the app banner must say: ‘Demo on synthetic data generated by the team. Results are illustrative, not measured on the organizers’ dataset.’ Never describe synthetic accuracy or lead time as achieved results on real data.
+Ask the organizers now: the required video length, file format, upload place, deadline, and whether a voice-over is expected. Do not guess these.
+21.2 Demo data: make it believable
+The starter generator in Section 6.7 has 8 issues. Extend it (version 2) so it looks like the problem statement describes:
+About 30 issue types, five owning functions, 4 regions, 40–60 stores of three sizes, 90–120 days, 30–40k records.
+Language mix per channel: reviews mostly English and Hinglish; app comments Hinglish and English with emojis; staff notes short, with abbreviations and romanized Marathi or Tamil; call transcripts longer, code-mixed, some truncated.
+About 5% exact or near duplicates, about 3% cross-channel groups describing one incident, about 4% truncated texts, about 8% typos, about 15% with emojis.
+Three planted incidents with different shapes: (1) a freezer failure at a small store, ramping up over 6 days across review, staff note and call; (2) an allergen mislabel at a mid-size store with only 3 reports over 5 days in 2 channels; (3) a rude billing counter at another store, steady for 7 days, mostly app comments and reviews.
+One decoy: a very large store with a high but normal volume of out-of-stock complaints. It must not alert, and it proves the volume normalization.
+One slow national rise in app-crash complaints across all stores. It must show up as a multi-store pattern, not as a single-store alert.
+Keep ground_truth_incidents.json for your own tests only. The pipeline never reads it.
+Use this invented taxonomy for the demo. On the final day it is replaced by the organizers’ taxonomy, and the matcher in Section 22 helps you map across.
+Write 2–3 templates per issue in English, Hinglish and romanized Tamil or Marathi, in the style of each channel. The more varied the templates, the more honest the demo accuracy numbers will look.
+21.3 Demo build order (minimal path to a recording)
+The total is roughly 58–75 hours. Feature freeze two days before recording: after that, bug fixes only.
+Using the generator’s own truth labels to evaluate on synthetic data is fine, because they are your labels. The rule against hidden labels applies to the organizers’ evaluation, not to your own demo data.
+21.4 Recording plan
+Tools (all free)
+macOS built-in recorder: press Cmd+Shift+5, choose to record the entire screen or a selected portion, and turn on the microphone in Options. QuickTime Player (File, New Screen Recording) does the same. OBS Studio is an optional free alternative.
+iMovie (free) to trim, stitch clips and add or fix the voice-over.
+Prepare the screen
+Turn on Do Not Disturb and quit chat, mail and notification apps.
+Run make reset-demo and restart Streamlit so every rehearsal begins in the same state.
+Set demo.replay_alert_id so the Radar page opens on your chosen incident.
+Browser at 110–125% zoom, full screen, one tab, light or dark mode kept consistent. Use 1080p or higher.
+Make sure the SYNTHETIC banner is visible on every page.
+Scenes (target 4–5 minutes unless the organizers say otherwise)
+Recording technique
+Record each scene as its own short clip (30–60 seconds). A mistake then costs one clip, not the whole video.
+Move the cursor slowly, pause for two seconds after each click, and use the browser zoom instead of pointing at small text.
+Write the narration, read it aloud twice, then record. Voice-over can also be recorded afterwards in iMovie.
+Watch the final video once at normal speed. Check audio level, no notifications or personal data visible, the SYNTHETIC statement visible at the start and end. Export a 1080p mp4, keep a copy in two places, and check the organizers’ file-size limit.
+21.5 Final-day plug-in runbook
+Readiness gates (build them now, specs in Section 22)
+G1 data profiler, G2 automatic column mapper, G3 messy-format tests, G4 taxonomy matcher and generic issue library, G5 offline model cache, G6 evaluate adapter with config-only changes, G7 timed rehearsal on synthetic data.
+Messy-format tests (G3): generate four copies of the synthetic data with different column names, date formats (31/12/2026 and 2026-12-31), encodings (UTF-8, UTF-8 with BOM, Latin-1) and file types (CSV, Excel, JSON). The pipeline must load all four. If it does, it is likely to survive the real files.
+Final-day steps (times are estimates)
+The total is about 5–6 hours if every gate was prepared and rehearsed. Set a hard stop time for the recording.
+Fallbacks
+21.6 Readiness checklist
+☐ Organizers asked for the video requirements and a data dictionary or sample rows
+☐ Demo data v2 and demo taxonomy built, with the decoy and the slow national rise
+☐ Every page shows the SYNTHETIC banner
+☐ All six UI pages run from one data model
+☐ Messy-format tests (G3) pass
+☐ Embedding model cached for offline use
+☐ Timed rehearsal of the final-day steps done twice on synthetic data
+☐ Screen recorded in short clips, stitched, checked and backed up
+☐ Opening and closing frames carry the synthetic-data statement
+22. Complete specifications of every remaining module
+These specifications close the gaps listed in Section 20. Each one gives purpose, input, output, steps, edge cases and a test, so you can write the file yourself. Every step module exposes a run() function that the CLI in Section 15 calls. Add openpyxl and markdown to requirements.txt (and ollama only if you use the optional polish).
+22.1 inspect_data.py (data profiler, gate G1)
+Purpose: tell you in two minutes what an unknown file looks like.
+Input: a folder, default data/raw. Output: console report and reports/profile.md.
+Steps: for every csv, tsv, xlsx, json or jsonl file: (1) read it with the loader in 22.3; (2) print the file name, row count and columns; (3) for each column guess the type (id, datetime, number, short text, long text, category) and print percent missing, unique count and three sample values; (4) for each text column print length percentiles (min, median, 95th, max), the most common exact length (a clue to a truncation cap), the percent with emoji, the percent in Devanagari or Tamil script, the percent non-ASCII and the language-pattern shares from Section 6.5; (5) for each datetime guess print the parse success under day-first and month-first, the min and max, and whether a time of day is present; (6) for store-like columns print the number of unique stores and the overlap with the store master; (7) print the exact-duplicate rate of the text.
+Edge cases: very large files, profile the first 50,000 rows. Encoding errors: try utf-8, utf-8-sig, cp1252, latin-1 in that order and report which worked.
+Test: run it on the four messy synthetic copies. It must name the date, store and text columns correctly in every copy.
+22.2 automap.py (column mapper, gate G2)
+Purpose: propose the CHANNELS mapping so final-day mapping is a ten-minute check.
+Input: the profile of each file. Output: config/mapping_suggested.yaml and a printed table with a confidence per column.
+Steps: score every column for every target, pick the best one, mark confidence high (name and content agree), medium (one agrees) or low (neither), write the YAML and print every low-confidence choice for you to fix by hand.
+Test: the four messy copies must map correctly.
+22.3 Multi-format loader (inside ingest.py)
+read_any(path) reads by extension: csv or tsv with delimiter sniffing, xlsx through pandas, json or jsonl through read_json (lines for jsonl). Always read as text, strip a BOM, try the encoding list from 22.1.
+Date parsing: try ISO format first. Otherwise parse both day-first and month-first and keep the one with the higher success rate. If any value has a first field above 12, day-first is certain. On a tie use day-first. Log the decision and the success rates in data_quality.json.
+22.4 normalize.run()
+Load records.parquet.
+text_masked = mask_pii(text_raw), then text_norm = normalize(text_masked), so personal data never reaches a model.
+lang_pattern from text_norm.
+is_truncated: per channel, if the most common text length covers at least 1% of rows and is at least 100 characters, treat it as a cap and mark records at or above it. Also mark texts ending with an ellipsis.
+Sort by (ts, record_id) with missing timestamps last. Write records_norm.parquet.
+Write the 400 most frequent tokens that are not in the normalization dictionary to reports/unknown_tokens.txt.
+Test: the row count equals records.parquet, and text_norm is never empty when text_raw is not.
+22.5 embed.run()
+Load records_norm.parquet and the model from the local cache (offline flag respected).
+Embed text_norm in batches of 64 and save embeddings.npy (float32, normalized, same row order).
+Save a small JSON with the model name, dimension, row count and a hash of the text_norm column. If the hash matches an existing cache, skip the work.
+Edge cases: embed the word empty for blank text; fall back to CPU if MPS fails.
+22.6 weak_labels.run()
+Load the taxonomy, embeddings.npy and records_norm.parquet.
+Compute keyword votes and prototype scores (Section 7.3) and combine them.
+Keep records with confidence at or above weak.min_conf, capped at weak.cap_per_class per class.
+Write weak_labels.parquet (record_id, issue, confidence, source: keyword, embedding or both).
+Print counts per class and warn about any class with fewer than 30 examples (add keywords or examples for it).
+Test: on synthetic data, print the weak-label accuracy against true_issue (tag it SYNTHETIC).
+22.7 train.py
+Training table: use the provided labels if there are any (Scenario A), otherwise the weak labels. Hand labels from dev_labels.csv replace weak labels for the same records and are repeated 3 times.
+Hold-out: if there are at least 200 dev labels, hold half of them out for model selection. Otherwise use 5-fold cross-validation on the dev set. Split by dup_group_id when it exists.
+Fit M1, M2 and M3 (Section 7.4) and write the macro-F1 of each to reports/model_comparison.csv.
+Pick the best macro-F1; on a tie take the simpler model.
+Tune τ on the held-out dev records (Section 7.5).
+Refit the chosen model on everything and save models/clf.joblib with the class list and τ.
+In Scenario A also fit severity and actionability models.
+Optional self-training round: predict the unlabeled records, add those with p1 >= 0.9 (capped per class), refit, and keep the result only if dev macro-F1 does not drop.
+Edge cases: classes missing from the training data are reported and dropped from predictions.
+22.8 score.py
+Load records_norm.parquet, embeddings.npy, the model, taxonomy, policy rules and routes.
+Predict issue, p1, second issue and margin with classify.predict.
+Run the policy engine on every text_norm. Write policy_hits.parquet (record_id, category, pattern, span, negated). Derive policy_flag (any non-negated hit), policy_weak (hits exist, all negated) and policy_cats.
+Run the semantic safety net (22.10) and add semantic_flag.
+Compute severity (Section 7.6) using the taxonomy default of the predicted issue, the policy floor, the rating and the text.
+Compute actionability (Scenario A model, or the heuristic plus the dev-trained model in Scenario B).
+Set needs_review when p1 < tau or the margin is small.
+Extract entities and set the issue family from the taxonomy.
+Run assign_groups for records that have a store and a time. Records without a store or time get their own group.
+Propagate policy_any to each group, mark the earliest record in each duplicate group as canonical.
+Write records_scored.parquet. Print counts: flagged, weak, needs_review, number of groups.
+22.9 build_taxonomy.py (taxonomy matcher, gate G4)
+Purpose: turn the organizers’ taxonomy into taxonomy.yaml and a draft routing.yaml quickly.
+Input: the organizers’ taxonomy file in any format, and config/issue_library.yaml (the 30 demo issues from Section 21.2 with descriptions, keywords, examples, severity and mandatory flags). Output: config/taxonomy.yaml, a draft config/routing.yaml, reports/taxonomy_match.csv.
+Steps: (1) read each organizer issue (id or name, owner function, definition if any); (2) embed name plus definition and find the most similar library entry; (3) accept a match only if it ranks clearly first and shares at least one keyword; (4) for matches copy description, keywords, examples and the mandatory flag from the library; (5) ids, names and owners always come from the organizers’ file, severity from their file if present, otherwise from the library; (6) unmatched issues get an empty description for you to write by hand; (7) if the organizers’ definition mentions safety, allergen, hygiene or misconduct, flag the issue mandatory even if the library does not; (8) write the match report with the similarity and a blank Review column, and the routing draft with owner, severity, a first-action template, the default escalation rule and the default SLA.
+Review rule: you read every row of taxonomy_match.csv and fix the mistakes.
+22.10 semantic.py (semantic safety net)
+Input: embeddings.npy, config/safety_prototypes.yaml (10–15 short sentences per safety category in English, Hinglish and romanized Tamil or Marathi).
+Steps: embed the prototypes; for each category take every record’s highest cosine to that category’s prototypes; flag records above the 99.5th percentile of that category that the regex did not flag; output semantic_flag and semantic_category.
+Use: review queue only. It never raises an alert by itself.
+22.11 radar.run()
+Load records_scored.parquet. Keep records with a store and a time, canonical == True and p1 >= radar.min_conf.
+Build the frame with columns ts, store_id, issue, group_id (the duplicate group), sorted by (ts, group_id).
+Run run_radar with the config, then link_cross_store.
+Convert timestamps to text and write radar_alerts.json.
+Print the number of alerts and alerts per store-week.
+Edge cases: if the data spans fewer days than warmup_days, print a warning and shorten the warm-up to a third of the span.
+22.12 alerts.run()
+Load radar alerts, policy hits, scored records, routes and policy rules.
+For each radar alert collect the policy categories of its evidence records and call route_for. Build the alert with emerging_alert. If any evidence record is policy-flagged, set tier to both and merge it with the matching policy alert.
+Build policy alerts from non-negated hits with policy_alerts, routed by route_for.
+Add the confidence label (Section 11.1), the template explanation text and the uncertainty notes (share of low-confidence records, share of truncated texts, the exposure-proxy statement).
+Add the region and the SLA due time (sla_hours from the route).
+Mark repeats: same store and issue as a Resolved alert in the last 30 days.
+Write alerts.json, then insert into the tracker with INSERT OR IGNORE.
+Test: a second run adds no new rows.
+22.13 brief.py
+Functions: week_bounds(ts) (Monday 00:00 in the configured timezone), build_facts(region, week_start), render(facts), export(region, week_start), run() (all regions and the last N weeks that have data).
+build_facts steps:
+Take canonical records in the region for the week and for the previous week.
+Per issue compute: unique groups now and before, affected stores (at least 2 unique reports or an alert in the week), and share excess against the four weeks before.
+Collect the region’s alerts opened in the week plus earlier alerts not yet resolved. Split them into the policy list (all of them) and the emerging list.
+Compute the emerging score per issue (largest -log10 p).
+Rank with the key in Section 12.2, take five, and for each fill name, severity, owner from routing, trend (12.3), quotes (12.4), rule and action.
+Read the due and overdue actions from the tracker.
+Build the caveats: exposure is a proxy, share of low-confidence classifications, percent of missing store or time, and a limited-history note when fewer than four weeks exist.
+Build the summary bullets from templates using counts only.
+Render the Jinja template to Markdown, convert it to HTML with the markdown package plus the print stylesheet, run verify, and write reports/briefs/<region>_<week>.md and .html. If verify fails, stop with an error.
+A region with no data in a week gets a short ‘no data this week’ brief, not an error.
+22.14 evaluate.run()
+Load the dev labels and the predictions. Compute classification_metrics, ece and the accuracy-versus-coverage points.
+Compute severity and actionability F1 when labels exist.
+Load the policy review results (the 50 flags per category you reviewed) and compute precision and recall.
+Radar: delay and detection from the injection trials, planted-incident results (synthetic only), false alerts per store-week, and baselines B1 to B3.
+Precision statement from your labelled alerts (Section 13.3) with Wilson intervals.
+Routing accuracy, override rate and the brief verification pass rate.
+Write reports/metrics.json where every value carries a source (SYNTHETIC, DEV or EVALUATE.PY) and the file carries data_mode.
+Call evaluate_adapter.export. Do not run the organizers’ evaluate.py automatically. You run it by hand and log it.
+22.15 make_sample_ids.py
+From the weak labels pick 12–15 records per class spread over the channels, add 60 random records and 60 policy-flagged records, remove duplicates, shuffle with the seed and write data/labels_dev/sample_ids.csv. On the final day shrink it to about 150 records: 3–4 per class, 20 random, 20 policy hits.
+22.16 UI pages 2 to 4
+2_Incidents: filters (region, store, issue, tier, status) and a search box; a table of alerts; a detail panel with evidence, reason, confidence, uncertainty notes and the rule text; the connection graph; status buttons; an owner override that requires a reason in a text box; a reviewer verdict radio (correct, incorrect, duplicate, already resolved, misrouted). Every action calls the tracker functions and shows the event history.
+3_Brief: region and week select boxes built from the files in reports/briefs/; a rendered Markdown preview; download buttons for Markdown and HTML.
+4_Trust: read reports/metrics.json. For every metric show the value with its source tag, or NOT RUN. Show the accuracy-versus-coverage line, the per-channel and per-language bars, the radar-versus-baseline table, the precision statement and the acceptance checklist from Section 17.
+22.17 Extra tests for the demo-first plan
+23. Final definition of done
+For the screen recording (now): the checklist in 21.6 is complete; the video covers the nine items in 21.1; the synthetic-data statement is visible at the start and end; a second person has watched it once.
+For the final day: the gates G1 to G7 passed in rehearsal; the ten steps in 21.5 ran on the real files; evaluate.py ran once and is logged in reports/eval_log.csv; the acceptance checklist in Section 17 is ticked with real values; the Trust page shows real values with the EVALUATE.PY or DEV tag, and any synthetic number is removed or clearly tagged.
+# | Required by R5 | Built in | How it is judged
+1 | Weekly one-page brief per region: top 5 issues, evidence quotes, affected stores, trend arrow vs last week | Sec 12 | Human review of usefulness and honesty
+2 | Routing: owning function + severity + stated escalation rule | Sec 8, 11 | Human review, consistency with taxonomy
+3 | Emerging-issue detection: small but sharply rising at one store | Sec 9 | Automatic: lead time on 3 seeded incidents
+4 | evaluate.py score: classification quality on hidden labels + detection lead time | Sec 7, 9, 13 | Automatic
+5 | Precision statement: of escalated issues, what fraction were truly actionable | Sec 13.3 | Automatic plus human review
+Stretch | De-duplication so one incident reported through four channels appears once | Sec 10 | Human review
+Problem | Decision | Why
+Code-mixed, transliterated, typo-filled text | Char n-gram TF-IDF + multilingual sentence embeddings + a small normalization dictionary. No machine translation. | Pretrained multilingual models know native scripts but are weak on romanized Tamil/Marathi. Char n-grams survive spelling drift. Translation can flip negation and severity.
+Few or no labels | Weak supervision (keywords + embedding prototypes vote) plus about 400 records you hand-label | Honest, allowed, and gives you a dev set to tune on instead of touching hidden labels
+No exposure denominators | Rate = issue reports ÷ the store’s total unique reports, shrunk toward the global issue share (empirical Bayes) | Small stores borrow strength, big stores do not dominate
+Hundreds of store × issue series, so many false alarms | p-value threshold + minimum count + minimum ratio + cooldown + ranking | Controls false alerts per store-week
+Duplicates inflate counts | Deduplicate before counting, keep links to originals | Copies must not fake a trend
+Duplicates vs corroboration | Count unique groups, but use the number of channels as a confidence booster | Four channels describing one freezer is evidence, not noise
+LLM hallucination | Briefs are built from structured facts with templates. An optional local LLM may only reword, then a number-checker verifies it | The spec forbids invented counts or causes
+Unknown evaluate.py format | One adapter file, column names in config | Isolates the unknown
+Artifact | Produced by | Location
+records.parquet, quarantine.parquet, data_quality.json | ingest | data/interim
+records_norm.parquet | normalize | data/interim
+embeddings.npy | embed | data/interim
+predictions.parquet (issue, p1, issue2, p2, severity, actionable, needs_review) | classify | data/processed
+policy_hits.parquet | policy | data/processed
+groups.parquet (dup_group_id, incident_cluster_id) | dedupe, fuse | data/processed
+alerts.parquet, evidence.parquet | radar, alerts | data/processed
+tracker.sqlite | tracker | data/processed
+metrics.json, eval_log.csv, briefs/ | evaluation, brief | reports
+Layer | Choice | Why | Alternative
+Machine, IDE | MacBook M2, macOS, VS Code | You already have them | PyCharm Community
+Language | Python 3.11 | Best ML ecosystem, arm64 builds exist for every library below | —
+Environment | venv + pip | Built in, nothing extra to learn | conda, uv
+Data | pandas, numpy, pyarrow (Parquet) | Fast on 40k rows, Parquet keeps types | polars, DuckDB
+Text cleanup | re, unicodedata, emoji, rapidfuzz | Deterministic and auditable | —
+Classic ML | scikit-learn | TF-IDF + LogisticRegression is a strong, fast, explainable baseline | LightGBM
+Embeddings | sentence-transformers with multilingual-e5-small (fallback: paraphrase-multilingual-MiniLM-L12-v2) | About 118M parameters, runs on M2 CPU or MPS, handles Hindi/Marathi/Tamil native script | LaBSE, MuRIL
+Similarity | numpy matrix products (optional faiss-cpu) | 40k × 384 floats is small, brute force is fine | FAISS, hnswlib
+Statistics | scipy.stats.poisson | Exact tail probabilities, no heavy dependency | statsmodels
+Graph | networkx + pyvis | Python-only, interactive HTML | Plotly
+Storage | Parquet files + SQLite (stdlib sqlite3) | No server to run, file-based, easy to share | DuckDB; Postgres is overkill
+UI | Streamlit + Plotly | Python-only, a multi-page app in an afternoon | React + FastAPI (slower for a beginner)
+Brief | Jinja2 templates → Markdown and HTML | Deterministic, cannot hallucinate | —
+Optional LLM | Ollama with llama3.2:3b or qwen2.5:3b (local) | Free and offline, used only to reword | none required
+Quality | pytest, ruff | Catches silent breakage | —
+Config | YAML files | Thresholds and word lists editable without code | —
+Orchestration | Makefile + argparse CLI | One command rebuilds everything | Prefect, Airflow (overkill)
+Version control | Git + GitHub | History and backup | —
+Column | Type | Notes
+record_id | str | channel + source id, unique, never reused
+channel | str | review, app, staff_note, call
+ts | datetime (UTC) | NaT is flagged, not deleted
+store_id | str | joined to the store master
+region | str | from the store master
+text_raw | str | untouched original, kept for audit
+text_masked | str | PII-masked raw text, the only text the UI and briefs show
+text_norm | str | normalized copy used by models and rules
+rating | float | review and app channels, else null
+lang_pattern | str | Section 6.5, used only to slice error analysis
+is_truncated | bool | Section 6.3
+has_store, has_ts | bool | the radar uses only rows where both are true
+is_synthetic | bool | true only for generated demo data
+Scenario | What you have | Strategy
+A | A labeled training sample is provided (labels not hidden) | Supervised training directly, hand-label only a small extra dev set
+B | Labels exist only inside evaluate.py (the likely reading of ‘hidden labels’) | Weak supervision + your own hand-labelled dev set, below
+Model | Description | Purpose
+M0 | Keyword + prototype weak labels used directly | Floor to beat
+M1 | TF-IDF (char 2–5 + word 1–2) + logistic regression | Fast, explainable baseline
+M2 | Embeddings + logistic regression | Cross-language meaning
+M3 | M1 + M2 features concatenated (hybrid) | Recommended default
+M4 | M3 after one self-training round | Usually a small gain
+Stretch | Fine-tune MuRIL or XLM-R | Only if you have at least 2k real labels and spare time
+Layer | Rule | Output
+S1 exact | same store and same normalized text (hash) | dup_group_id
+S2 near-duplicate | same store, within 72 hours, cosine ≥ 0.95 or character similarity ≥ 92 | dup_group_id
+S3 fusion | same store, same issue family, within 72 hours, cosine ≥ 0.80 or a shared entity | incident_cluster_id
+Field | Meaning
+alert_id | stable id, for example E-S07-freezer_failure-202607190930 (E = emerging, P = policy)
+tier | policy, emerging, or both
+store_id, region, issue, severity | what and where
+owner, cc | from routing (Section 11.2)
+first_signal_ts, alert_ts | first related report and the moment the alert fired
+n_reports, n_unique, channels | counts after dedupe and the contributing channels
+why | the policy rule and matched words, and/or the trend numbers (k, expected, ratio, p), cross-channel and cross-store flags
+evidence | up to 10 records: id, channel, time, masked text
+confidence | low, medium or high, labelled heuristic
+uncertainty_notes | low-confidence classifications, truncated text, proxy exposure
+action, escalation_rule | suggested first step and the stated rule
+status | Detected, Reviewed, Assigned, Action taken, Resolved
+Area | Metric | How
+Classification | macro-F1, weighted-F1, per-class P/R/F1, confusion matrix | scikit-learn on your dev set
+Slices | macro-F1 by channel and by language pattern | groups with at least 20 records
+Calibration | expected calibration error, accuracy vs coverage | below
+Severity, actionability | F1 | dev labels (Scenario B) or provided labels (Scenario A)
+Policy | recall on dev safety items, precision per category | dev set plus a manual review of 50 flags per category
+Dedupe | pairwise precision on 50 hand-checked pairs per layer, recall on injected duplicates | manual plus synthetic
+Radar | detection rate, median delay, false alerts per store-week, days earlier than B1 | Section 9.4 and 9.5
+Routing | share of alerts whose owner equals the taxonomy owner, override rate | tracker
+Brief | share of briefs passing verify, policy items present | Section 12.6
+Coverage | share of records with needs_review, error rate by channel | predictions
+Comparison | Metric to report
+Weak labels only (M0) vs TF-IDF (M1) vs embeddings (M2) vs hybrid (M3) | macro-F1 on dev
+With vs without deduplication | false alerts per store-week, detection rate
+With vs without exposure normalization | false alerts at the same detection rate
+Radar vs B1, B2, B3 | detection rate, median delay, false alerts per store-week
+With vs without the policy layer | recall on safety items
+Page | Shows
+Home (Command Center) | Headline numbers (reports in 7 days, open alerts, policy items awaiting review, overdue), the priority queue sorted by the brief ranking, a recent feedback stream with a channel filter
+1_Radar | Pick an alert, daily-count chart with the alert moment marked, replay slider, cross-store patterns, radar-vs-baseline panel
+2_Incidents | Search and filters (region, store, issue, tier, status), evidence list, connection graph, owner override with reason, status buttons, reviewer verdict buttons
+3_Brief | Region and week selectors, rendered preview, Markdown and HTML downloads
+4_Trust | Values from metrics.json or NOT RUN, accuracy-vs-coverage, slice tables, false alerts, the acceptance checklist
+5_Label_Tool | Hand-label the dev set (Section 7.3)
+Step | What it does | Writes
+ingest | read the four channels and the store master, validate, quarantine | records.parquet, data_quality.json
+normalize | add text_norm, text_masked, lang_pattern, is_truncated | records_norm.parquet
+embed | embed text_norm once and cache | embeddings.npy
+weak_labels | keyword and prototype votes, pseudo-labels | weak_labels.parquet
+train | fit the hybrid classifier on pseudo-labels plus dev labels | models/clf.joblib
+score | predict, policy scan, severity, entities, dedupe and fusion, merge | records_scored.parquet, policy_hits.parquet
+radar | run the detector on unique groups, link cross-store patterns | radar_alerts.json
+alerts | build alert objects, route, write to the tracker | alerts.json, tracker.sqlite
+brief | render the briefs for every region and week | reports/briefs/
+evaluate | compute your metrics, export the files for evaluate.py | metrics.json, export csv files
+Phase | Work | Hours | Done when
+0 | Setup (Sections 4–5) | 2–3 | check_env.py runs, repo is on GitHub
+1 | Data layer (Section 6) | 6–8 | data_quality.json, normalization tests, synthetic data
+2 | Taxonomy, weak labels, 400 hand labels (7.2–7.3) | 8–10 | dev_labels.csv has about 400 rows
+3 | Classifier (7.4–7.6) | 6–8 | metrics by class, channel, language; abstain curve
+4 | Policy engine (Section 8) | 4–6 | tests pass, 50 flags reviewed per category
+5 | Dedupe, entities, score step (Section 10) | 5–7 | duplicates collapse, policy_any preserved
+6 | Radar and tuning (Section 9) | 10–14 | planted incidents found, radar_grid.csv, baselines compared
+7 | Alerts, routing, tracker (Section 11) | 6–8 | idempotent alerts with evidence and owners
+8 | Regional brief (Section 12) | 4–6 | one-page brief per region and week, numbers verified
+9 | Streamlit UI (Section 14) | 8–12 | all pages work on one data model, banner shows
+10 | Evaluation and trust (Section 13) | 6–8 | metrics.json, eval_log.csv, precision statement
+11 | Polish and rehearsal (Sections 17–18) | 6–8 | clean run passes, 3-minute demo rehearsed twice
+Test | Asserts
+test_normalize | idempotent, keeps nahi and not, emoji becomes a token
+test_policy | Section 8.5 cases plus a post-noun negation such as ‘keeda nahi tha’
+test_radar_causal | adding future records never changes earlier alerts
+test_radar_finds_planted | the synthetic planted incident alerts
+test_radar_small_store | the same raw count alerts in a tiny store but not in a big one
+test_dedupe | duplicates collapse and policy_any propagates
+test_routing | an allergen alert routes to the policy owner whatever the classifier said
+test_alerts_idempotent | running twice yields identical alert ids
+test_brief_numbers | verify passes on the generated brief
+test_no_label_leakage | no source module except synth.py mentions true_issue or planted
+Time | Screen | What you say and show
+0:00–0:20 | Home | Thousands of messages arrive through four channels and the signal is scattered. Show a review, a staff note and a call that look unrelated
+0:20–0:55 | Incidents | One fused cluster with its evidence and the graph. Say ‘possible common refrigeration issue, cause not confirmed’
+0:55–1:35 | Radar | Drag the replay slider: first weak signal, second channel, alert. Compare with the simple volume rule. State the lead time and where it comes from
+1:35–2:00 | Incidents | A single allergen report escalates anyway. Show the rule text and the note ‘needs human review, unverified’
+2:00–2:25 | Incidents | Owner, SLA, status moving to Assigned, and an owner override with a reason
+2:25–2:50 | Brief, Trust | The one-page brief, then the real evaluation values, the precision statement with its interval, the slice table and known weaknesses
+2:50–3:00 | Home | StoreSignal turns scattered store chatter into earlier, explainable and accountable action
+Likely question | Honest answer
+Why not just use an LLM? | Safety rules and statistics are auditable and deterministic. A model only rewords sentences that are already true, and a checker rejects invented numbers
+How do big stores not dominate? | Each store is compared with its own history, scaled by its own activity, and small stores are shrunk toward the global rate
+What about a brand-new store? | The prior covers it, and alerts carry a limited-history note during warm-up
+What is the false-alarm rate? | Measured in store-weeks on the calibration period, with parameters chosen by injected-incident tests
+Is it accurate on Tanglish? | Show the per-language slice table, including where it is weak, and what you would fix next
+Did you use the hidden labels? | No. You tuned on your own dev set and injection tests, and every evaluate.py run is in eval_log.csv
+Privacy? | Masked text in the UI, no external API calls, raw text access restricted
+Does it scale? | The radar costs a few lookups per record and embeddings are batch jobs. Swap SQLite and Parquet for Postgres and a warehouse
+Risk | Mitigation
+Code-mixed text is misclassified | Char n-grams, embeddings, dictionary growth from data, per-language slice reporting
+Big stores dominate alerts | Own-history baseline, exposure proxy, shrinkage
+A severe low-volume issue is missed | Independent policy layer, semantic net, manual recall check on dev
+Duplicates inflate trends | Three-layer dedupe, count unique groups, keep provenance
+Too many false alarms | Injection-based tuning, false alerts per store-week reported, cooldown
+Keyword rules over-fire | Negation handling, review queue for weak hits, tier-separated precision
+AI invents a cause or action | Templates, evidence-only summaries, number checker, hypothesis wording
+Demo numbers mistaken for results | SYNTHETIC banner, NOT RUN placeholders
+Unknown evaluate.py format | One adapter, config-only column names, read its first 60 lines on day 1
+Time runs out | Protected chain in Section 16
+Symptom | Fix
+command not found: python3.11 | brew install python@3.11, then open a new Terminal
+ModuleNotFoundError: storesignal | Activate .venv, run pip install -e ., start Streamlit from the project root
+Embedding crashes on MPS or runs out of memory | Force device='cpu', lower the batch to 16, or set PYTORCH_ENABLE_MPS_FALLBACK=1
+Model download fails | Download once with internet, then export HF_HUB_OFFLINE=1
+Timestamps become NaT | Check the timezone in config, use utc=True when values carry offsets
+Makefile says missing separator | Recipe lines need a TAB
+Streamlit port already used | streamlit run app/Home.py --server.port 8502
+Radar fires too often | Confirm dedupe ran, raise min_conf, tighten p_thr or raise k_min
+Radar never fires on the planted incident | Print the series for that store and issue, check the predicted issue labels, loosen k_min or the window
+Devanagari or Tamil text looks garbled | Read and write CSV with encoding='utf-8'
+Logistic regression is slow | Lower max_features to 100000 or use solver='saga'
+Issue id | Meaning | Owner | Default severity | Mandatory risk
+cold_chain_failure | Freezer or fridge not cooling | Store Ops | high | no
+food_hygiene | Pests, spoiled food, bad smell | Store Ops | high | yes
+physical_safety | Slip, electrical or fire hazard, injury | Store Ops | high | yes
+long_queue | Long queues, too few counters | Store Ops | medium | no
+billing_error | Wrong bill or double charge at the counter | Store Ops | medium | no
+store_cleanliness | Untidy aisles, dirty washrooms | Store Ops | low | no
+equipment_breakdown | Trolley, lift, scanner or AC broken | Store Ops | medium | no
+parking_access | Parking or entrance problems | Store Ops | low | no
+staff_misconduct | Abuse, harassment, discrimination | HR | high | yes
+rude_service | Rude or dismissive staff | HR | medium | no
+staff_shortage | Not enough staff on the floor | HR | medium | no
+staff_knowledge | Staff cannot answer product questions | HR | low | no
+allergen_mislabel | Wrong or missing allergen or veg/non-veg label | Supply Chain | critical | yes
+expired_stock | Expired or near-expiry stock on shelf | Supply Chain | high | yes
+short_delivery | Delivered quantity short | Supply Chain | medium | no
+damaged_goods | Damaged packs on arrival | Supply Chain | medium | no
+delivery_delay | Supplier delivery late | Supply Chain | medium | no
+packaging_defect | Leaking, torn or tampered packaging | Supply Chain | medium | no
+out_of_stock | Item unavailable | Merchandising | medium | no
+price_mismatch | Shelf price differs from bill | Merchandising | medium | no
+wrong_placement | Item in the wrong aisle or no label | Merchandising | low | no
+promo_not_applied | Offer not applied at billing | Merchandising | medium | no
+assortment_gap | Missing brands or ranges | Merchandising | low | no
+product_quality | Poor freshness or quality | Merchandising | medium | no
+app_crash | App crashes or freezes | Digital | medium | no
+payment_failure | Payment failed or double debited | Digital | high | no
+login_issue | Cannot log in or OTP fails | Digital | medium | no
+wrong_online_order | Wrong or missing items in an online order | Digital | medium | no
+delivery_slot_issue | Slot unavailable or home delivery late | Digital | medium | no
+coupon_error | Coupon or points not working | Digital | low | no
+Step | Work | Sections | Hours | Done when
+1 | Setup | 4–5 | 2–3 | check_env.py runs
+2 | Demo data v2 and the demo taxonomy file | 6.7, 21.2 | 4–6 | 30k+ synthetic records with 3 planted incidents, a decoy and a slow national rise
+3 | Ingest, normalize, embeddings | 6, 22 | 5–6 | records_norm.parquet and embeddings.npy exist
+4 | Weak labels and classifier, evaluated against the synthetic truth and tagged SYNTHETIC | 7, 22 | 6–8 | macro-F1 table by class, channel, language
+5 | Policy engine | 8 | 4–5 | tests pass
+6 | Dedupe, entities, score step | 10, 22 | 5–6 | records_scored.parquet
+7 | Radar and tuning by injection | 9 | 8–10 | planted incidents found, decoy quiet, radar_grid.csv
+8 | Alerts, routing, tracker | 11, 22 | 5–7 | idempotent alerts.json and tracker
+9 | Brief | 12, 22 | 4–5 | one-page brief per region and week
+10 | UI pages | 14, 22 | 8–10 | all six pages work
+11 | Trust numbers and baselines | 13 | 4–5 | metrics.json with SYNTHETIC tags
+12 | Rehearse and record | 21.4 | 4–6 | final video exported
+Time | Scene | On screen | Say
+0:00–0:25 | Problem and promise | Title card, then Home | Feedback arrives through four channels in mixed languages, and real problems are buried. This is a demo on synthetic data
+0:25–0:55 | Data in | Recent feedback stream, channel filter | Four channels, Hinglish, Tamil, typos, emojis, truncation. Each record gets an issue, severity, confidence
+0:55–1:30 | Fusion | Incident Explorer, one cluster and the graph | Four reports through four channels appear once. Possible common cause, not confirmed
+1:30–2:20 | Early warning | Radar, replay slider | First weak signal, second channel, alert. A simple volume rule fires later or never. The decoy store stays quiet because volume is normalized
+2:20–2:50 | Safety | One allergen report with three words of text | Policy escalates it regardless of volume. Rule text and ‘needs human review’ are shown
+2:50–3:20 | Action | Owner, SLA, override with reason, status change | Each alert has an owner and a rule. Overrides are logged
+3:20–3:50 | Brief | Regional brief | Top 5 issues, quotes, affected stores, trend arrows, safety box
+3:50–4:30 | Trust | Trust page | Measured on synthetic data, tagged. Precision statement with its interval, baseline comparison, known weaknesses
+4:30–5:00 | Close | Title card | The same system will be re-run on the organizers’ data on the final day
+Step | Action | Check | Time
+1 | Copy the files into data/raw (keep a backup). Run the profiler | About 40k rows in total, four channels found, dates plausible, at least 95% of records join to a store | 30 min
+2 | Confirm the auto mapping, set data_mode: real and the timezone, run ingest | Low quarantine rate, missing store and timestamp rates understood | 15 min
+3 | Run the taxonomy matcher, review each match, copy owners only from the organizers’ file, draft routing.yaml | Every issue has an owner and a severity; mandatory categories flagged | 45 min
+4 | Policy check: scan the real text, review 50 hits, add up to 3 patterns per category for words you see | Both negated and real cases handled | 20 min
+5 | Grow the normalization dictionary from the 400 most frequent unknown tokens | Top spelling variants merged | 30 min
+6 | Hand-label about 150 records in the Label Tool | dev_labels.csv has 150 rows | 60 min
+7 | Run the full pipeline (embeddings take 5–15 minutes) | Every step prints its counts | 45 min
+8 | Check the radar on real data: alerts per store-week. If it is far above your target, make it stricter by one notch. Do not tune against evaluate.py | Alert volume is sensible | 20 min
+9 | Read evaluate.py, fill the evaluate block in config, export, run it once, log it | One logged run | 30 min
+10 | Review the top alerts and the brief on real data, rehearse, re-record if required | The demo runs on real data | 60 min
+Situation | Action
+Store ids are missing or fewer than 90% join | Match by store name with fuzzy matching, mark the rest UNKNOWN and exclude them from the radar
+Timestamps are dates only | Run the radar at day granularity (window of at least 3 days) and report lead time in days, stating that limit
+A labeled training sample is provided after all | Use Scenario A in Section 7.3
+The taxonomy has different names or a different count | Use the matcher, and where similarity is low write the description by hand from the organizers’ definition
+The pipeline is too slow | Smaller batch, the smaller embedding model, or the TF-IDF-only model (M1)
+evaluate.py wants other formats | Change only the evaluate block in config and the adapter
+Memory errors | Process in chunks, lower max_features
+Time is nearly out | Protect the minimal chain: M1 classifier, policy, radar, brief
+Target | Column-name hints (case-insensitive, substring) | Content hint
+source_id | id, ticket, uuid, review_id, note_id | at least 99% unique, not free text
+ts | date, time, timestamp, created, opened, posted | at least 90% parse as datetimes
+store_id | store, outlet, branch, shop, location, site | at least 80% of values appear in the store master
+text_raw | text, comment, review, note, transcript, message, feedback, body, description | the text column with the longest average length
+rating | rating, stars, score | numeric, mostly 1 to 5
+channel | file-name hints: review; app; staff, shift or note; call, ticket or transcript | none
+Test | Asserts
+test_loader | all four messy synthetic copies load and give the same row counts
+test_automap | the mapper finds the date, store and text columns in every copy
+test_decoy_quiet | the large decoy store raises no alert
+test_national_rise | the slow app-crash rise raises no single-store alert but appears as a multi-store pattern or a national trend
+test_taxonomy_match | at least 80% of the library issues map back to themselves when fed as input

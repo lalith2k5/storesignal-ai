@@ -1,0 +1,845 @@
+"""Synthetic demo data generator (v2, Section 21.2). SYNTHETIC data only --
+never present its numbers as real results.
+
+~30-40k records, four channels, four regions, 50 stores of three sizes,
+code-mixed text with typos and emojis, ~5% duplicates, ~3% cross-channel
+groups, ~4% truncated texts, three planted incidents (the team's own, not
+the organizers' seeded ones), one decoy store that must not alert, and a
+slow national rise in app-crash complaints.
+
+Writes data/synthetic/records.parquet (clean schema), truth.parquet (the
+team's own labels; the pipeline never reads it) and ground_truth_incidents.json.
+"""
+import json
+
+import numpy as np
+import pandas as pd
+
+from .config import ROOT, cfg
+
+rng = np.random.default_rng(cfg['seed'])
+
+# --------------------------------------------------------------------------
+# Templates per issue per language. 'en' is the fallback for any language.
+TEMPLATES = {
+    'cold_chain_failure': {
+        'en': ["freezer is not cooling and the ice cream melted",
+               "the fridge temperature is too high, milk is warm",
+               "ice cream was melting on the shelf"],
+        'hi': ["freezer thanda nahi kar raha, kulfi pighal gayi",
+               "fridge ka temperature theek nahi hai, milk garam tha"],
+        'ta': ["freezer romba noisy, ice cream ellam melt aayiduchu",
+               "fridge cooling illa, milk warm ah irundhuchu"],
+        'mr': ["freezer thand nahi karat, ice cream vithal",
+               "fridge cha temperature changla nahiye, doodh garam hota"],
+    },
+    'food_hygiene': {
+        'en': ["saw a cockroach near the bakery section",
+               "there was a bad smell near the dairy counter",
+               "found a worm in the biscuit packet"],
+        'hi': ["dairy section me keeda tha aur smell bahut kharab thi",
+               "biscuit packet me keeda nikla"],
+        'ta': ["biscuit packet la poochi irundhuchu, romba ganda",
+               "dairy area la bad smell, sapadu pakkam poochi"],
+        'mr': ["biscuit cha packet madhe keeda hota",
+               "dairy section la khup gand basli hoti"],
+    },
+    'physical_safety': {
+        'en': ["floor was wet near the entrance and I slipped",
+               "there is a broken glass piece near the billing counter",
+               "loose wire is hanging near the shelf, sparking"],
+        'hi': ["billing ke paas wire khula tha, short circuit ka darr",
+               "floor pe paani gira tha aur main phisal gaya"],
+        'ta': ["kids area la glass udanja irundhuchu, romba bayam",
+               "floor wet ah irundhuchu, vizhundhuten"],
+        'mr': ["billing samor wire ugda hota, dhoka ahe",
+               "floor var pani hota, mi padlo"],
+    },
+    'long_queue': {
+        'en': ["queue is too long, only one counter open",
+               "waited 25 minutes in the billing line",
+               "only two counters working at peak time"],
+        'hi': ["billing line bahut lambi thi, ek hi counter chalu tha",
+               "20 minute line me khade rahe"],
+        'ta': ["evening la queue romba perusa irundhuchu, 25 min wait pannen",
+               "rendu counter thaan open, line romba perusu"],
+        'mr': ["line khup lambi hoti, ekach counter suru hota",
+               "20 minit line madhe ubhe rahilo"],
+    },
+    'billing_error': {
+        'en': ["I was billed twice for the same item",
+               "the bill amount was higher than the shelf price",
+               "they charged me for an extra item I did not buy"],
+        'hi': ["bill me 200 rupaye zyada le liye",
+               "ek hi item ka do baar bill bana diya"],
+        'ta': ["enakku wrong amount charge pannitanga, bill therinja podhum",
+               "same item ku rendu dhadava bill pottanga"],
+        'mr': ["bill madhe extra paise ghetle",
+               "ekach item cha don wela bill kela"],
+    },
+    'store_cleanliness': {
+        'en': ["floor was wet and dirty near the entrance",
+               "the washroom was very dirty",
+               "aisles have not been cleaned, lots of dust"],
+        'hi': ["washroom ganda tha aur paani bhara pada tha",
+               "floor pe dust aur kachra pada tha"],
+        'ta': ["aisle la spill irundhuchu, yaarum clean pannala",
+               "toilet romba ganda ah irundhuchu"],
+        'mr': ["jhopdi gandi hoti, pani bharlela hota",
+               "aisle madhe kachra padla hota"],
+    },
+    'equipment_breakdown': {
+        'en': ["the self-checkout scanner was not working",
+               "the AC is not working and it is very hot inside",
+               "card machine was down at the billing counter"],
+        'hi': ["lift kharab thi, pura saaman seedhi se le jaana pada",
+               "AC kharab hai, andar bahut garmi hai"],
+        'ta': ["billing la card machine work pannala",
+               "lift odungala, romba kashtam"],
+        'mr': ["card machine band hota, payment karu shaklo nahi",
+               "AC chalala, at khup garam hota"],
+    },
+    'parking_access': {
+        'en': ["there is no parking space near the store",
+               "the entrance was blocked with trolleys",
+               "no ramp for wheelchair access"],
+        'hi': ["entrance ke paas cart rakh diye the, jaana mushkil tha",
+               "parking me jagah hi nahi thi"],
+        'ta': ["wheelchair la ulla vara mudiyala, ramp illa",
+               "parking full ah irundhuchu, edathula nikka mudiyala"],
+        'mr': ["parking madhe jaga nahi hoti",
+               "darwaja samor gadi ubhi hoti, at yeta avghad"],
+    },
+    'staff_misconduct': {
+        'en': ["the staff member abused a customer at the counter",
+               "the security guard harassed me near the exit",
+               "staff was shouting and threatening customers"],
+        'hi': ["staff ne gaali di aur bahut badtameezi ki",
+               "security wale ne dhakka diya"],
+        'ta': ["security staff romba misbehave pannanga, romba bayama irundhuchu",
+               "staff apasabdam pesinanga"],
+        'mr': ["staff gaali det hota, khup vaitag zala",
+               "security ne dhakka dila"],
+    },
+    'rude_service': {
+        'en': ["billing guy was very rude to me",
+               "the staff argued with me when I asked for the bill",
+               "staff was dismissive and did not help"],
+        'hi': ["billing wale ne badtameezi se baat ki",
+               "staff ne jawaab dene me rudely baat ki"],
+        'ta': ["staff romba rude ah pesinanga, konjam kuda respect illa",
+               "billing la irundhavanga kovama pesinanga"],
+        'mr': ["billing staff khup rudely bolala",
+               "staff ne uddhat panni bolala"],
+    },
+    'staff_shortage': {
+        'en': ["there was no staff at the dairy section for 10 minutes",
+               "only one person was managing the whole billing counter",
+               "no staff at the fresh vegetables section"],
+        'hi': ["counter pe koi staff nahi tha",
+               "puri dukaan me ek hi staff tha"],
+        'ta': ["juice section la yaarum staff illa, help kekka aal illa",
+               "billing la oru aal thaan irundhanga"],
+        'mr': ["counter var kuni staff nahi hota",
+               "sagle dukanat ekach staff hota"],
+    },
+    'staff_knowledge': {
+        'en': ["staff had no idea where the gluten free section was",
+               "the staff gave me wrong information about the offer",
+               "no one could tell me if the product was veg"],
+        'hi': ["staff ko product ke baare me kuch nahi pata tha",
+               "offer ke baare me galat jankari di"],
+        'ta': ["staff kitta keta answer theriyaadhunnu sonnanga",
+               "veg product edhunnu staff ku theriyala"],
+        'mr': ["staff la product baddal kahich mahit nahi hota",
+               "offer baddal chukichi mahiti dili"],
+    },
+    'allergen_mislabel': {
+        'en': ["label said nut free but my son had a reaction",
+               "the packet did not mention peanuts but it had them",
+               "veg label on a product that contains egg"],
+        'hi': ["packet pe nut free likha tha par peanuts the, allergy ho gayi",
+               "label me ingredients galat likhe the"],
+        'ta': ["veg label irundha product la non veg irundhuchu, romba kastam",
+               "nut free nu sonna packet la peanut irundhuchu"],
+        'mr': ["packet var nut free lihila hota pan peanut hota",
+               "label chukicha hota, allergy zali"],
+    },
+    'expired_stock': {
+        'en': ["found milk packets past their expiry date on the shelf",
+               "the juice was expired but still on the shelf",
+               "expiry date was yesterday but they were selling it"],
+        'hi': ["shelf pe expired biscuits rakhe the",
+               "doodh ki expiry nikal chuki thi"],
+        'ta': ["juice expiry date kadandhu pochu, shelf la irundhuchu",
+               "expired bread vithutanga"],
+        'mr': ["expiry zalela dudh shelf var hota",
+               "expired juice vikat hota"],
+    },
+    'short_delivery': {
+        'en': ["today's delivery was short by three cartons of milk",
+               "the supplier delivered fewer units than ordered",
+               "two boxes were missing from the morning delivery"],
+        'hi': ["aaj ki delivery me maal kam aaya",
+               "order se kam quantity aayi thi"],
+        'ta': ["order panna quantity vida delivery la less aachu",
+               "moonu carton milk missing"],
+        'mr': ["delivery madhe maal kami aala",
+               "order peksha kami quantity aali"],
+    },
+    'damaged_goods': {
+        'en': ["three tetra packs arrived dented and leaking",
+               "the delivery had crushed biscuit packets",
+               "vegetable crates arrived with spoiled items"],
+        'hi': ["delivery me aadhe packets dab gaye the",
+               "doodh ke packet phate hue aaye"],
+        'ta': ["van la vandha juice bottles ellam udanja irundhuchu",
+               "biscuit packets crushed ah vandhuchu"],
+        'mr': ["delivery madhe packets churgaleli hoti",
+               "dudhachi pishvi phaatleli aali"],
+    },
+    'delivery_delay': {
+        'en': ["the morning delivery has not arrived yet",
+               "supplier delivery is late by two days",
+               "stock did not arrive on the scheduled day"],
+        'hi': ["supplier ka maal kal se nahi aaya hai",
+               "delivery do din late hai"],
+        'ta': ["delivery innum varala, shelf empty ah irukku",
+               "supplier late, stock varala"],
+        'mr': ["supplier cha maal ajun aala nahi",
+               "delivery don diwas late ahe"],
+    },
+    'packaging_defect': {
+        'en': ["the oil bottle seal was broken on the shelf",
+               "packet was open and the seal was tampered",
+               "milk packet was leaking on the shelf"],
+        'hi': ["shelf pe kai packets ke seal khule the",
+               "oil ki bottle leak ho rahi thi"],
+        'ta': ["biscuit wrapper open ah irundhuchu, tamper madhiri",
+               "milk packet leak aagiruchu"],
+        'mr': ["tel chi batali galat hoti",
+               "packet cha seal tutlela hota"],
+    },
+    'out_of_stock': {
+        'en': ["milk is out of stock again",
+               "bread was not available in the evening",
+               "the item has been out of stock for three days"],
+        'hi': ["bread khatam ho gaya, kal bhi nahi tha",
+               "doodh stock me nahi hai"],
+        'ta': ["eggs stock illa, moonu naal ah same problem",
+               "milk illa, romba varushama illa"],
+        'mr': ["dudh stock madhe nahiye",
+               "bread sampali, kal pan nahi hoti"],
+    },
+    'price_mismatch': {
+        'en': ["shelf price is different from the bill amount",
+               "the MRP on the packet and the bill do not match",
+               "offer price was not applied and I paid more"],
+        'hi': ["shelf pe ek price tha aur bill me dusra",
+               "bill me zyada price laga"],
+        'ta': ["offer price kooda bill la vera price vanthuchu",
+               "shelf price bill kooda match aagala"],
+        'mr': ["shelf var vegla price, bill madhe dusra",
+               "bill madhe jast paise lagle"],
+    },
+    'wrong_placement': {
+        'en': ["the rice was in the wrong aisle with no shelf label",
+               "items are misplaced and hard to find",
+               "no price label on many shelves"],
+        'hi': ["saaman galat shelf pe rakha tha",
+               "label nahi tha, kya cheez hai pata nahi chala"],
+        'ta': ["price label illa, edhukku evlo nu theriyala",
+               "wrong aisle la item irundhuchu"],
+        'mr': ["label nahi hota, kay gosht samjat nahi",
+               "chukichya shelf var saaman hota"],
+    },
+    'promo_not_applied': {
+        'en': ["the buy one get one offer was not applied at billing",
+               "discount shown on the shelf was not given",
+               "the combo offer was missing from the bill"],
+        'hi': ["offer ka discount bill me nahi laga",
+               "buy one get one offer nahi mila"],
+        'ta': ["combo offer apply aagala, full price vangitanga",
+               "shelf la irundha discount bill la illa"],
+        'mr': ["offer chi sut bill madhe milali nahi",
+               "combo offer lagala nahi"],
+    },
+    'assortment_gap': {
+        'en': ["this store does not stock the sugar free range anymore",
+               "the brand I buy is never available here",
+               "very limited options in the snacks section"],
+        'hi': ["is store me organic brands nahi milte",
+               "pehle wala brand ab nahi milta"],
+        'ta': ["indha size illa, range eh kadayaadhu",
+               "enakku venum brand inga illa"],
+        'mr': ["ha brand ithe milat nahi",
+               "range kami ahe ithe"],
+    },
+    'product_quality': {
+        'en': ["the vegetables were not fresh today",
+               "the bread was hard and stale",
+               "fruit quality has gone down recently"],
+        'hi': ["fruits ki quality bahut kharab thi",
+               "sabzi fresh nahi thi"],
+        'ta': ["bread romba hard ah irundhuchu, fresh illa",
+               "kaai kani quality mosam"],
+        'mr': ["bhajya taji nahi hotya",
+               "bread kathin hoti, taji nahi"],
+    },
+    'app_crash': {
+        'en': ["the app crashes at checkout every time",
+               "app freezes when I try to add items",
+               "app closes on the payment page"],
+        'hi': ["app checkout pe baar baar hang ho jata hai",
+               "app khul ke band ho jata hai"],
+        'ta': ["app payment panna apo freeze aagudhu",
+               "app open aagave illa"],
+        'mr': ["app checkout la varan varan band hota",
+               "app freeze hota payment kartana"],
+    },
+    'payment_failure': {
+        'en': ["my payment failed but money was deducted",
+               "UPI payment stuck and amount was debited",
+               "payment deducted twice for the same order"],
+        'hi': ["paisa kat gaya par payment nahi hua",
+               "payment do baar kat gaya"],
+        'ta': ["refund innum varala, double debit aachu",
+               "payment fail aana money pochu"],
+        'mr': ["paise gele pan payment zala nahi",
+               "don wela paise katle"],
+    },
+    'login_issue': {
+        'en': ["I cannot log in, the OTP never arrives",
+               "password reset link is not working",
+               "app logs me out every time"],
+        'hi': ["login nahi ho raha, OTP hi nahi aa raha",
+               "har baar logout ho jata hai"],
+        'ta': ["app open panna mudiyala, login fail aagudhu",
+               "OTP varave illa"],
+        'mr': ["login hot nahiye, OTP yet nahiye",
+               "password reset hot nahiye"],
+    },
+    'wrong_online_order': {
+        'en': ["my online order had the wrong item and one missing",
+               "they delivered a different brand than I ordered",
+               "two items were missing from my order"],
+        'hi': ["online order me galat item bhej diya",
+               "order ke do item missing the"],
+        'ta': ["order panna product illa, vera item vandhuchu",
+               "rendu item missing"],
+        'mr': ["chukicha item pathvla",
+               "order madhe item kami hota"],
+    },
+    'delivery_slot_issue': {
+        'en': ["no delivery slot was available for three days",
+               "my slot was cancelled without any update",
+               "slot was rescheduled twice"],
+        'hi': ["slot cancel ho gaya aur koi update nahi",
+               "teen din se slot nahi mil raha"],
+        'ta': ["book panna slot cancel aagiruchu, delivery varala",
+               "slot eh kidaikala"],
+        'mr': ["slot cancel zala, delivery nahi aali",
+               "tin diwas slot nahiye"],
+    },
+    'coupon_error': {
+        'en': ["the coupon code is not working at checkout",
+               "my loyalty points were not added",
+               "voucher expired before its date"],
+        'hi': ["coupon apply nahi ho raha hai",
+               "loyalty points add nahi hue"],
+        'ta': ["loyalty points add aagala, coupon invalid nu kaamikudhu",
+               "coupon code work aagala"],
+        'mr': ["coupon code chalat nahiye",
+               "points add zale nahi"],
+    },
+}
+
+# Extra template cores merged into TEMPLATES: a small pool makes thousands of
+# records look copy-pasted (exact-dup rate explodes). Variety keeps the
+# duplicate rate realistic (~5%).
+EXTRA = {
+    'out_of_stock': {
+        'en': ['milk was not available again today', 'the pasta shelf has been empty for a week',
+               'no eggs in the evening, happens every day', 'butter is sold out again'],
+        'hi': ['doodh aaj phir nahi mila', 'atta stock me nahi tha', 'pasta shelf ek hafte se khali hai'],
+        'ta': ['milk stock illa inaikku kooda', 'atta vaanga mudiyala, stock eh illa'],
+        'mr': ['dudh ajun nahi mile', 'atta stock madhe nahi hota'],
+    },
+    'long_queue': {
+        'en': ['only one billing counter was open in the evening rush',
+               'had to stand in line for half an hour', 'the queue snaked till the entrance',
+               'no fast billing lane was open'],
+        'hi': ['shaam ko ek hi counter khula tha', 'aadha ghanta line me laga raha'],
+        'ta': ['evening rush la oru counter thaan', 'line entrance varaikkum pochu'],
+        'mr': ['sandhyakali ekach counter hota', 'ardha tas line madhe'],
+    },
+    'billing_error': {
+        'en': ['they charged me for three items instead of two',
+               'the bill total did not match the displayed price', 'got charged twice for the milk packet'],
+        'hi': ['do item ke teen ke paise liye', 'bill ka total galat nikla'],
+        'ta': ['moonu item ku charge pannitanga, rendu thaan vaanginen'],
+        'mr': ['don vastu che tin che paise ghetle'],
+    },
+    'price_mismatch': {
+        'en': ['the offer price was not reflected in the bill',
+               'shelf tag said one price, the machine charged another',
+               'MRP on the pack and the bill were different'],
+        'hi': ['shelf ka price aur bill ka price alag tha', 'machine ne zyada price liya'],
+        'ta': ['shelf la oru price, bill la innoru price'],
+        'mr': ['shelf var ek price, bill madhe dusra'],
+    },
+    'store_cleanliness': {
+        'en': ['the vegetable section had rotten leaves on the floor',
+               'bins near the billing counter were overflowing', 'floor near the dairy was sticky and dirty'],
+        'hi': ['sabzi section me phaili hui gandagi thi', 'billing ke paas dustbin bhara pada tha'],
+        'ta': ['vegetable section la keera romba ganda', 'dairy pakkam floor sticky ah irundhuchu'],
+        'mr': ['bhaji section madhe gandagi hoti', 'floor chiktat hota'],
+    },
+    'staff_shortage': {
+        'en': ['had to search for a staff member for ten minutes',
+               'the billing counter had no one manning it', 'only one employee in the entire section'],
+        'hi': ['dus minute tak koi staff nahi mila', 'billing counter pe koi baitha nahi tha'],
+        'ta': ['pattu nimisham staff ah thedinen', 'billing la yaarum illa'],
+        'mr': ['daha minit staff milala nahi', 'billing var kuni nahi'],
+    },
+    'product_quality': {
+        'en': ['the paneer packet smelled off', 'bananas were overripe and bruised',
+               'the curd was watery and sour'],
+        'hi': ['paneer se smell aa rahi thi', 'kele pak ke kharab ho gaye the'],
+        'ta': ['paneer smell adichuchu', 'vazhaipazham romba paluthu kedarnthathu'],
+        'mr': ['paneer la vas yet hoti', 'keli khup pikaleli'],
+    },
+    'app_crash': {
+        'en': ['the app crashed three times while placing my order',
+               'app hangs when I open the cart', 'checkout screen goes blank every time'],
+        'hi': ['order karte waqt app teen baar band hua', 'cart khulte hi app hang ho jata hai'],
+        'ta': ['order panna apo moonu dhadava app crash aachu', 'cart open panna hang aagudhu'],
+        'mr': ['order kartana app tin wela band zala', 'cart ughtana app hang hoto'],
+    },
+    'rude_service': {
+        'en': ['the billing staff answered rudely when I asked a question',
+               'the staff member rolled her eyes and walked away',
+               'the guard spoke very harshly to my father'],
+        'hi': ['sawaal puchne par billing wale ne rudely jawaab diya',
+               'staff ne aankh dikha kar muh mod liya'],
+        'ta': ['kelvi ketta staff kovama pesinanga', 'guard appa kitta romba harsh ah pesinanga'],
+        'mr': ['prashna vicharlayavar staff rudely uttar dila', 'staff tond kela ani nighun gela'],
+    },
+    'equipment_breakdown': {
+        'en': ['the escalator has been off for two days', 'trolley wheels were all jammed',
+               'the AC at the dairy section is leaking water'],
+        'hi': ['escalator do din se band hai', 'trolley ke pahiye atak rahe the'],
+        'ta': ['escalator rendu naala off ah irukku', 'trolley wheels jam aagiruchu'],
+        'mr': ['escalator don diwas band ahe', 'trolley cha chak jam zale'],
+    },
+    'cold_chain_failure': {
+        'en': ['the frozen section feels warm to touch', 'milk kept going sour quickly'],
+        'hi': ['frozen section garam lag raha hai'],
+        'ta': ['frozen section warm ah irukku'],
+        'mr': ['frozen section garam lagte'],
+    },
+    'food_hygiene': {
+        'en': ['there were flies all over the bakery items', 'the meat section smelled really bad'],
+        'hi': ['bakery items pe makkhiyan bhinbhin kar rahi thi'],
+        'ta': ['bakery la eegalu romba irundhuchu'],
+        'mr': ['bakery var mashya hotya'],
+    },
+    'physical_safety': {
+        'en': ['a ceiling panel was hanging loose near the entrance',
+               'the ramp was slippery after the rain'],
+        'hi': ['entrance ke paas chhat ka panel latak raha tha'],
+        'ta': ['entrance la ceiling panel thongitu irundhuchu'],
+        'mr': ['darwaja samor panel latkat hota'],
+    },
+    'parking_access': {
+        'en': ['delivery trucks were blocking the parking entry', 'no space to park even a two wheeler'],
+        'hi': ['parking entry pe truck khada tha'],
+        'ta': ['parking entry la truck ninnuchu'],
+        'mr': ['parking samor truck hota'],
+    },
+    'staff_misconduct': {
+        'en': ['the cashier used abusive language with an old customer',
+               'a staff member threatened to call security on me'],
+        'hi': ['cashier ne budhe customer ko gaali di'],
+        'ta': ['cashier vayadana customer ah thittinanga'],
+        'mr': ['cashier ne mhatarya customer la shivya dili'],
+    },
+    'staff_knowledge': {
+        'en': ['the staff could not say when the next stock comes',
+               'no one knew about the exchange policy'],
+        'hi': ['staff ko exchange policy nahi pata thi'],
+        'ta': ['exchange policy pathi staff ku theriyala'],
+        'mr': ['exchange policy baddal staff la mahit navhta'],
+    },
+    'allergen_mislabel': {
+        'en': ['the cookies said eggless but the ingredient list has egg',
+               'my daughter got hives after eating the labelled snack'],
+        'hi': ['biscuit pe eggless likha tha par anda tha'],
+        'ta': ['eggless nu pottu egg irundhuchu'],
+        'mr': ['eggless lihila hota pan anda hota'],
+    },
+    'expired_stock': {
+        'en': ['the bread packet expired two days ago', 'found last month expiry on the chips'],
+        'hi': ['bread do din pehle expire ho chuki thi'],
+        'ta': ['bread rendu naal munnadi expire aachu'],
+        'mr': ['bread don diwas adhi expire zali'],
+    },
+    'short_delivery': {
+        'en': ['the delivery note said five cartons but only three arrived',
+               'biscuits carton missing from today load'],
+        'hi': ['delivery note me paanch the par teen aaye'],
+        'ta': ['note la anju irundhuchu, moonu thaan vandhuchu'],
+        'mr': ['note madhe pach hota, tin aale'],
+    },
+    'damaged_goods': {
+        'en': ['the oil can arrived with a big dent', 'chips packets in the carton were crushed'],
+        'hi': ['oil ka dabba dab gaya tha'],
+        'ta': ['oil tin dent aagirundhuchu'],
+        'mr': ['tel cha dabba churgalela'],
+    },
+    'delivery_delay': {
+        'en': ['the supplier promised morning delivery but nothing came',
+               'stock vehicle has not shown up since yesterday'],
+        'hi': ['supplier ne subah bola tha par maal nahi aaya'],
+        'ta': ['supplier morning nu sonnanga, onnum varala'],
+        'mr': ['supplier ne sakali sangitle pan maal ala nahi'],
+    },
+    'packaging_defect': {
+        'en': ['the juice tetra pack seal was broken', 'the chocolate wrapper was tampered'],
+        'hi': ['juice ke packet ka seal toota tha'],
+        'ta': ['juice packet seal odanja irundhuchu'],
+        'mr': ['juice chi seal tutli hoti'],
+    },
+    'wrong_placement': {
+        'en': ['detergent was kept in the food aisle', 'no price tags on the new snack range'],
+        'hi': ['detergent khane ke saman me rakha tha'],
+        'ta': ['detergent food aisle la irundhuchu'],
+        'mr': ['detergent khadyapadarthat hota'],
+    },
+    'promo_not_applied': {
+        'en': ['the advertised discount was missing from my bill',
+               'bogo offer was not given at the counter'],
+        'hi': ['discount bill me nahi kata'],
+        'ta': ['discount bill la kammi aagala'],
+        'mr': ['discount bill madhe sutla nahi'],
+    },
+    'assortment_gap': {
+        'en': ['they stopped keeping the low sugar biscuits',
+               'the kids snack range has shrunk to two brands'],
+        'hi': ['low sugar biscuits band kar diye'],
+        'ta': ['kids snacks rendu brand thaan irukku'],
+        'mr': ['kids snacks che range kami zala'],
+    },
+    'payment_failure': {
+        'en': ['the UPI payment got stuck for ten minutes', 'my wallet was debited but the order failed'],
+        'hi': ['UPI payment atak gaya tha'],
+        'ta': ['UPI payment stuck aachu'],
+        'mr': ['UPI payment adakla'],
+    },
+    'login_issue': {
+        'en': ['the app keeps saying invalid credentials', 'OTP expires before it arrives'],
+        'hi': ['OTP aane se pehle expire ho jata hai'],
+        'ta': ['OTP varadhukkulla expire aagudhu'],
+        'mr': ['OTP yenyapurvi expire hoto'],
+    },
+    'wrong_online_order': {
+        'en': ['I ordered brown bread but got white', 'the delivery had someone else\u2019s items inside'],
+        'hi': ['brown bread mangaaya tha, white aaya'],
+        'ta': ['brown bread order pannen, white vandhuchu'],
+        'mr': ['brown bread magitle, white aala'],
+    },
+    'delivery_slot_issue': {
+        'en': ['my slot was moved twice without asking me', 'no slots for the whole weekend'],
+        'hi': ['slot do baar badal diya bina puche'],
+        'ta': ['weekend ku slot eh illa'],
+        'mr': ['weekend la slot nahiye'],
+    },
+    'coupon_error': {
+        'en': ['the points never got added to my account', 'coupon says expired though it is valid'],
+        'hi': ['points account me add nahi hue'],
+        'ta': ['points account la add aagala'],
+        'mr': ['points account madhe add zale nahi'],
+    },
+}
+for _iss, _langs in EXTRA.items():
+    for _lang, _ts in _langs.items():
+        TEMPLATES[_iss].setdefault(_lang, []).extend(_ts)
+
+# Base issue weights (normalized). Mandatory-risk issues are rare by design.
+BASE_WEIGHTS = {
+    'cold_chain_failure': .020, 'food_hygiene': .008, 'physical_safety': .008,
+    'long_queue': .120, 'billing_error': .070, 'store_cleanliness': .060,
+    'equipment_breakdown': .035, 'parking_access': .010, 'staff_misconduct': .004,
+    'rude_service': .030, 'staff_shortage': .050, 'staff_knowledge': .010,
+    'allergen_mislabel': .003, 'expired_stock': .006, 'short_delivery': .010,
+    'damaged_goods': .015, 'delivery_delay': .020, 'packaging_defect': .020,
+    'out_of_stock': .160, 'price_mismatch': .090, 'wrong_placement': .015,
+    'promo_not_applied': .030, 'assortment_gap': .008, 'product_quality': .040,
+    'app_crash': .050, 'payment_failure': .020, 'login_issue': .020,
+    'wrong_online_order': .015, 'delivery_slot_issue': .020, 'coupon_error': .020,
+}
+
+LANG_BY_REGION = {
+    'North': ['en', 'en', 'hi'],
+    'South': ['en', 'en', 'ta'],
+    'West': ['en', 'en', 'mr'],
+    'East': ['en', 'en', 'en', 'hi'],
+}
+CHANNEL_PROBS = ['review', 'app', 'staff_note', 'call']
+CHANNEL_P = [.3, .3, .2, .2]
+TRUNC_CAPS = {'review': 180, 'app': 110, 'staff_note': 120, 'call': 280}
+EMOJIS = ['😡', '🙁', '😠', '👍', '😊', '😐', '!!!', '...', '🙏']
+CALL_FILLERS = [' mentioned it happened twice this week', ' asked for a callback',
+                ' says it has been like this since morning', ' was very upset on the call',
+                ' reported the same thing last month too']
+NOISE_TAIL = ['this is really annoying', 'please fix it soon', 'i shop here every week',
+              'very disappointing experience', 'i will not come back if this continues',
+              'hope the management takes action', 'even the staff agreed it is a problem',
+              'this never happens at other stores', 'we are regular customers here',
+              'someone should look into this', 'it has become worse this month',
+              'my whole family faces this', 'i had to complain twice already',
+              'the store was very crowded today', 'it was not like this before',
+              'kindly improve the service', 'this needs urgent attention',
+              'i spend a lot of money here', 'other customers were also upset',
+              'the situation is getting worse daily',
+              'really bad experience overall', 'i was shocked honestly',
+              'third time this has happened', 'nobody takes responsibility',
+              'the staff just ignored it', 'took photos as proof',
+              'called customer care but no help', 'my time was completely wasted',
+              'seriously considering another store', 'this store used to be better',
+              'even the manager did nothing', 'total waste of my evening',
+              'kids were getting impatient', 'i felt embarrassed for them',
+              'quality is going down every week', 'no one bothered to apologise',
+              'had to wait with heavy bags', 'the app also did not work',
+              'got a very poor response', 'still waiting for a solution',
+              'this is basic stuff they should handle']
+
+
+def _pick_tmpl(issue, lang, rng):
+    pool = TEMPLATES[issue].get(lang) or TEMPLATES[issue]['en']
+    return str(rng.choice(pool))
+
+
+# Planted incidents use only strong, keyword-rich templates so the demo chain
+# (classify -> radar -> alert) is reliable; the weaker phrasings stay in the
+# base population where they add realistic noise.
+PLANTED_POOL = {
+    'cold_chain_failure': [
+        'freezer is not cooling and the ice cream melted',
+        'the fridge temperature is too high, milk is warm',
+        'ice cream was melting on the shelf',
+        'freezer thanda nahi kar raha, kulfi pighal gayi',
+        'fridge ka temperature theek nahi hai, milk garam tha',
+        'freezer romba noisy, ice cream ellam melt aayiduchu',
+        'fridge cooling illa, milk warm ah irundhuchu',
+        'freezer thand nahi karat, ice cream vithal',
+        'fridge cha temperature changla nahiye, doodh garam hota',
+    ],
+    'allergen_mislabel': [
+        'label said nut free but my son had a reaction',
+        'the packet did not mention peanuts but it had them',
+        'veg label on a product that contains egg',
+        'packet pe nut free likha tha par peanuts the, allergy ho gayi',
+        'label me ingredients galat likhe the',
+        'veg label irundha product la non veg irundhuchu, romba kastam',
+        'nut free nu sonna packet la peanut irundhuchu',
+        'packet var nut free lihila hota pan peanut hota',
+    ],
+    'rude_service': [
+        'billing guy was very rude to me',
+        'the staff argued with me when I asked for the bill',
+        'staff was dismissive and did not help',
+        'billing wale ne badtameezi se baat ki',
+        'staff ne jawaab dene me rudely baat ki',
+        'staff romba rude ah pesinanga, konjam kuda respect illa',
+        'billing staff khup rudely bolala',
+    ],
+}
+
+
+def _pick_planted(issue, rng):
+    pool = PLANTED_POOL.get(issue)
+    if pool is None:
+        fallback_issue = 'cold_chain_failure' if issue == 'freezer_failure' else issue
+        pool = TEMPLATES[fallback_issue]['en']
+    return str(rng.choice(pool))
+
+
+def noisy(t, rng, tail_prob=0.6):
+    if rng.random() < .10 and len(t) > 6:
+        i = int(rng.integers(1, len(t) - 2))
+        t = t[:i] + t[i + 1:]  # drop a character (typo)
+    if rng.random() < .20:
+        t += ' ' + str(rng.choice(EMOJIS))
+    if rng.random() < tail_prob:
+        t += ', ' + str(rng.choice(NOISE_TAIL))
+    return t
+
+
+def style(ch, t, rng):
+    if ch == 'staff_note':
+        return ('shift note: ' if rng.random() < .7 else 'note: ') + t
+    if ch == 'call':
+        pre = 'customer called about: ' if rng.random() < .5 else ('transcript: ' if rng.random() < .6 else '')
+        post = str(rng.choice(CALL_FILLERS)) if rng.random() < .6 else ''
+        return pre + t + post
+    return t
+
+
+def _rating(issue, rng, severity_of):
+    sev = severity_of.get(issue, 'medium')
+    if sev in ('high', 'critical'):
+        return float(rng.choice([1, 1, 2, 2, 3]))
+    if sev == 'medium':
+        return float(rng.choice([1, 2, 2, 3, 3, 4]))
+    return float(rng.choice([2, 3, 3, 4, 4, 5]))
+
+
+def make(days=None, n_stores=None, incidents=None, decoy_store=None):
+    sc = cfg['synth']
+    days = days or sc['days']
+    n_stores = n_stores or sc['n_stores']
+    decoy_store = decoy_store or sc['decoy_store']
+    incidents = incidents if incidents is not None else sc['incidents']
+    start = pd.Timestamp(sc['start'], tz='UTC')
+    regions = ['North', 'South', 'West', 'East']
+
+    stores = pd.DataFrame({
+        'store_id': ['S%02d' % (i + 1) for i in range(n_stores)],
+        'region': [regions[i % 4] for i in range(n_stores)],
+        'size': rng.choice([0.4, 1.0, 2.5], size=n_stores, p=[.4, .4, .2]),
+    })
+    stores.loc[stores['store_id'] == decoy_store, 'size'] = 5.0
+    # Planted incidents target small stores (the demo story: weak signals at
+    # a small store beat big-store volume).
+    for inc in incidents:
+        if inc['store'] in set(stores['store_id']):
+            stores.loc[stores['store_id'] == inc['store'], 'size'] = 0.4
+
+    issues = list(BASE_WEIGHTS)
+    base_p = np.array([BASE_WEIGHTS[i] for i in issues])
+    base_p = base_p / base_p.sum()
+    # decoy: elevated but CONSTANT out-of-stock rate (its normal, from day 1)
+    decoy_p = base_p.copy()
+    decoy_p[issues.index('out_of_stock')] *= 3.0
+    decoy_p = decoy_p / decoy_p.sum()
+
+    # national rise in app_crash: convex multiplier m(d) = 1 + 3.5*(d/119)^3
+    app_idx = issues.index('app_crash')
+
+    rows = []
+    for d in range(days):
+        # national rise in app_crash: convex multiplier m(d) = 1 + 3.5*(d/119)^3
+        m_app = 1.0 + 3.5 * (d / max(days - 1, 1)) ** 3
+        for s in stores.itertuples():
+            p = decoy_p if s.store_id == decoy_store else base_p
+            if m_app > 1.0:
+                p = p.copy()
+                p[app_idx] *= m_app
+                p = p / p.sum()
+            n = int(rng.poisson(6 * s.size))
+            for _ in range(n):
+                issue = str(rng.choice(issues, p=p))
+                ch = str(rng.choice(CHANNEL_PROBS, p=CHANNEL_P))
+                lang = str(rng.choice(LANG_BY_REGION[s.region]))
+                t = noisy(style(ch, _pick_tmpl(issue, lang, rng), rng), rng)
+                ts = start + pd.Timedelta(days=d, minutes=int(rng.integers(0, 1440)))
+                rating = _rating(issue, rng, {}) if ch in ('review', 'app') else None
+                rows.append({'store_id': s.store_id, 'region': s.region, 'channel': ch, 'ts': ts,
+                             'text_raw': t, 'rating': rating, 'issue': issue, 'planted': False})
+
+    # ---- planted incidents (the team's own) ----
+    for inc in incidents:
+        istore = inc['store']
+        iregion = stores.loc[stores['store_id'] == istore, 'region'].iloc[0]
+        for d in range(inc['start'], inc['start'] + inc['len']):
+            lam = inc['per_day'] * (0.5 + 1.5 * (d - inc['start']) / max(inc['len'] - 1, 1)) \
+                if inc.get('ramp') else inc['per_day']
+            for _ in range(int(rng.poisson(lam))):
+                ch = str(rng.choice(inc.get('channels', ['review', 'staff_note', 'call'])))
+                t = noisy(style(ch, _pick_planted(inc['issue'], rng), rng), rng)
+                ts = start + pd.Timedelta(days=d, minutes=int(rng.integers(0, 1440)))
+                rating = _rating(inc['issue'], rng, {}) if ch in ('review', 'app') else None
+                rows.append({'store_id': istore, 'region': iregion, 'channel': ch, 'ts': ts,
+                             'text_raw': t, 'rating': rating, 'issue': inc['issue'], 'planted': True})
+
+    df = pd.DataFrame(rows)
+    n0 = len(df)
+
+    # ---- ~3% explicit duplicates (app resubmits, one ticket logged twice) ----
+    dup_idx = rng.choice(len(df), size=int(0.03 * len(df)), replace=False)
+    dup_rows = []
+    for i in dup_idx:
+        r = df.iloc[i]
+        t = r['text_raw']
+        if rng.random() < .6:
+            pass  # exact duplicate
+        elif len(t) > 6:
+            j = int(rng.integers(1, len(t) - 2))
+            t = t[:j] + t[j + 1:]  # near duplicate: one char different
+        ts = r['ts'] + pd.Timedelta(minutes=int(rng.integers(1, 360)))
+        dup_rows.append({**r.to_dict(), 'ts': ts, 'text_raw': t})
+    df = pd.concat([df, pd.DataFrame(dup_rows)], ignore_index=True)
+
+    # ---- ~3% cross-channel groups describing one incident ----
+    group_idx = rng.choice(n0, size=int(0.03 * n0), replace=False)
+    extra_rows = []
+    for i in group_idx:
+        r = df.iloc[i]
+        if r['planted']:
+            continue
+        others = [c for c in CHANNEL_PROBS if c != r['channel']]
+        for ch in rng.choice(others, size=int(rng.integers(1, 3)), replace=False):
+            lang = str(rng.choice(LANG_BY_REGION[r['region']]))
+            t = noisy(style(ch, _pick_tmpl(r['issue'], lang, rng), rng), rng)
+            ts = r['ts'] + pd.Timedelta(hours=int(rng.integers(1, 72)))
+            rating = _rating(r['issue'], rng, {}) if ch in ('review', 'app') else None
+            extra_rows.append({'store_id': r['store_id'], 'region': r['region'], 'channel': ch,
+                               'ts': ts, 'text_raw': t, 'rating': rating,
+                               'issue': r['issue'], 'planted': False})
+    df = pd.concat([df, pd.DataFrame(extra_rows)], ignore_index=True)
+
+    # ---- truncation (~4%: the source system cut a longer message at its cap) ----
+    TRUNC_PAD = ["also the staff did not respond on time", "this is the third time this month",
+                 "i waited very long and nobody helped", "the manager was not available",
+                 "i have complained about this before too", "even the app support did not reply",
+                 "my kids were with me and it was very difficult", "the store was crowded at that time",
+                 "nobody answered my questions properly", "i want a refund for this experience",
+                 "the same problem happened last week also", "please look into this matter soon"]
+
+    def _truncate(r):
+        cap = TRUNC_CAPS[r['channel']]
+        t = r['text_raw']
+        if len(t) < cap + 5:
+            t = t + ' ' + ' '.join(str(rng.choice(TRUNC_PAD)) for _ in range(6))
+        return t[:cap]
+    tr_idx = rng.random(len(df)) < 0.06
+    df.loc[tr_idx, 'text_raw'] = df.loc[tr_idx].apply(_truncate, axis=1)
+
+    # ---- finalize ----
+    df = df.sort_values('ts', kind='stable').reset_index(drop=True)
+    df['record_id'] = ['%s-%06d' % (r.channel, i) for i, r in enumerate(df.itertuples())]
+    df['ts'] = pd.to_datetime(df['ts'], utc=True)
+    df['rating'] = pd.to_numeric(df['rating'], errors='coerce')
+    df['is_synthetic'] = True
+
+    out = ROOT / 'data' / 'synthetic'
+    out.mkdir(parents=True, exist_ok=True)
+    df[['record_id', 'channel', 'ts', 'store_id', 'region', 'text_raw', 'rating']].to_parquet(
+        out / 'records.parquet')
+    df[['record_id', 'issue', 'planted', 'is_synthetic']].rename(
+        columns={'issue': 'true_issue'}).to_parquet(out / 'truth.parquet')
+    gt = [{'store': inc['store'], 'issue': inc['issue'],
+           'start_ts': (start + pd.Timedelta(days=inc['start'])).isoformat(), 'len': inc['len']}
+          for inc in incidents]
+    json.dump(gt, open(out / 'ground_truth_incidents.json', 'w'), indent=2)
+    print('synth: %d records (%d stores, %d days) written to data/synthetic/'
+          % (len(df), n_stores, days))
+    print('  planted: %s' % df['planted'].value_counts().to_dict())
+    print('  channels: %s' % df['channel'].value_counts().to_dict())
+    print('  regions: %s' % df['region'].value_counts().to_dict())
+    return df
+
+
+if __name__ == '__main__':
+    make()

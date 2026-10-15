@@ -1,0 +1,24 @@
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+# Raw organizer data — never commit (guide §4 step 8)
+data/raw/
+
+# Trained model binaries (rebuildable from code + config)
+models/*.joblib
+
+# Large intermediate artifacts (rebuildable)
+data/interim/embeddings.npy
+data/interim/records.parquet
+data/interim/records_norm.parquet
+data/processed/*.parquet
+
+# Ephemeral
+data/processed/tracker.sqlite
+reports/runs/*/config.yaml
+
+# IDE
+.vscode/
+.idea/

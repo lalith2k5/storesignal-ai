@@ -1,0 +1,5 @@
+Metadata-Version: 2.4
+Name: storesignal
+Version: 0.1.0
+Summary: StoreSignal AI — multilingual retail early-warning and incident-resolution intelligence (R5)
+Requires-Python: >=3.10

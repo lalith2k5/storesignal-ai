@@ -1,0 +1,192 @@
+# Routing table. Owner and severity come from the taxonomy (the organizers'
+# taxonomy on the final day). SLA hours and first actions are placeholders
+# unless the organizers provide them.
+routes:
+  cold_chain_failure:
+    owner: Store Ops
+    severity: high
+    first_action: Check the freezer temperature log, move at-risk stock, raise a maintenance ticket
+    escalation_rule: Trend rule - 3 or more unique reports in 3 days at 3x the store baseline. Escalate to Supply Chain if 2 or more stores.
+    sla_hours: 24
+  food_hygiene:
+    owner: Store Ops
+    severity: high
+    first_action: Inspect the area, record findings, follow the pest and hygiene checklist
+    escalation_rule: MANDATORY - one report triggers review within 24 hours regardless of volume
+    sla_hours: 24
+  physical_safety:
+    owner: Store Ops
+    severity: high
+    first_action: Check the area the same day, remove the hazard, log any injury
+    escalation_rule: MANDATORY - one report triggers a same-day check regardless of volume
+    sla_hours: 12
+  long_queue:
+    owner: Store Ops
+    severity: medium
+    first_action: Review counter scheduling for the reported hours and open an extra counter at peak
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  billing_error:
+    owner: Store Ops
+    severity: medium
+    first_action: Recheck the bill against shelf prices and correct the error for the customer
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  store_cleanliness:
+    owner: Store Ops
+    severity: low
+    first_action: Add the area to the cleaning schedule and recheck at the next shift
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  equipment_breakdown:
+    owner: Store Ops
+    severity: medium
+    first_action: Tag the equipment out of service and raise a maintenance ticket
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  parking_access:
+    owner: Store Ops
+    severity: low
+    first_action: Check entrance and parking access, remove obstructions
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  staff_misconduct:
+    owner: HR
+    cc: [Store Ops]
+    severity: high
+    first_action: HR reviews within 24 hours; the store manager is informed; record the outcome
+    escalation_rule: MANDATORY - one report triggers HR review within 24 hours regardless of volume
+    sla_hours: 24
+  rude_service:
+    owner: HR
+    severity: medium
+    first_action: Speak with the staff member and the shift lead, record the conversation
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  staff_shortage:
+    owner: HR
+    severity: medium
+    first_action: Check the roster for the reported hours and cover the gap
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  staff_knowledge:
+    owner: HR
+    severity: low
+    first_action: Add the topic to the next staff training brief
+    escalation_rule: Standard trend rule
+    sla_hours: 96
+  allergen_mislabel:
+    owner: Supply Chain
+    cc: [Store Ops]
+    severity: critical
+    first_action: Verify the label against the product spec, pull the batch if it mismatches, ask Store Ops to check shelves
+    escalation_rule: MANDATORY - one report triggers same-day human review regardless of volume
+    sla_hours: 4
+  expired_stock:
+    owner: Supply Chain
+    severity: high
+    first_action: Pull the expired batch from the shelf and check the same product family
+    escalation_rule: MANDATORY - one report triggers review within 24 hours regardless of volume
+    sla_hours: 24
+  short_delivery:
+    owner: Supply Chain
+    severity: medium
+    first_action: Reconcile the delivery note with the order and log the shortage with the supplier
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  damaged_goods:
+    owner: Supply Chain
+    severity: medium
+    first_action: Quarantine the damaged stock and file the supplier damage claim
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  delivery_delay:
+    owner: Supply Chain
+    severity: medium
+    first_action: Chase the supplier for the pending delivery and adjust the replenishment plan
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  packaging_defect:
+    owner: Supply Chain
+    severity: medium
+    first_action: Remove the affected units and report the defect to the supplier
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  out_of_stock:
+    owner: Merchandising
+    severity: medium
+    first_action: Check the replenishment order and the shelf fill for the missing item
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  price_mismatch:
+    owner: Merchandising
+    severity: medium
+    first_action: Correct the shelf label or the bill price to match the approved price
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  wrong_placement:
+    owner: Merchandising
+    severity: low
+    first_action: Fix the planogram placement and add the missing shelf label
+    escalation_rule: Standard trend rule
+    sla_hours: 96
+  promo_not_applied:
+    owner: Merchandising
+    severity: medium
+    first_action: Verify the offer configuration and apply the missed discount
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  assortment_gap:
+    owner: Merchandising
+    severity: low
+    first_action: Review the range list and log the gap for the next assortment review
+    escalation_rule: Standard trend rule
+    sla_hours: 96
+  product_quality:
+    owner: Merchandising
+    severity: medium
+    first_action: Inspect the batch on the shelf and remove units below standard
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  app_crash:
+    owner: Digital
+    severity: medium
+    first_action: Collect app version and repro steps, raise a bug ticket with the app team
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  payment_failure:
+    owner: Digital
+    severity: high
+    first_action: Verify the transaction with payments and initiate the refund where due
+    escalation_rule: Standard trend rule
+    sla_hours: 48
+  login_issue:
+    owner: Digital
+    severity: medium
+    first_action: Check account status and OTP logs, help the customer reset access
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  wrong_online_order:
+    owner: Digital
+    severity: medium
+    first_action: Reconcile the order with the packing list and arrange the redelivery
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  delivery_slot_issue:
+    owner: Digital
+    severity: medium
+    first_action: Check slot capacity for the area and rebook the delivery
+    escalation_rule: Standard trend rule
+    sla_hours: 72
+  coupon_error:
+    owner: Digital
+    severity: low
+    first_action: Check the coupon validity and credit the missing points or discount
+    escalation_rule: Standard trend rule
+    sla_hours: 96
+default:
+  owner: Store Ops
+  severity: medium
+  first_action: Review the evidence and assign an owner
+  escalation_rule: Standard trend rule
+  sla_hours: 72

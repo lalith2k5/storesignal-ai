@@ -1,0 +1,387 @@
+# Demo issue taxonomy — 30 issue types across 5 owning functions.
+# IDs, names and owners come from the organizers' taxonomy on the final day
+# (run build_taxonomy.py to remap). Descriptions, keywords and examples are
+# domain knowledge the team added; they are not hidden-label information.
+issues:
+  - id: cold_chain_failure
+    name: Freezer or cold-chain failure
+    owner: Store Ops
+    default_severity: high
+    mandatory_risk: false
+    family: cold_chain
+    description: freezer or fridge not cooling, warm milk, melted ice cream, cold chain broken
+    seed_keywords: [freezer, fridge, chiller, refrigerator, cooling, "not cooling", melted, pighal, "thanda nahi", "cooling fail", "temperature high", defrost]
+    example_texts:
+      - freezer is not cooling and the ice cream melted
+      - fridge ka temperature theek nahi, milk garam tha
+      - freezer romba noisy, ice cream ellam melt aayiduchu
+  - id: food_hygiene
+    name: Food hygiene or pest problem
+    owner: Store Ops
+    default_severity: high
+    mandatory_risk: true
+    family: hygiene_safety
+    description: pests, spoiled or stale food, bad smell, food poisoning, dirty food area
+    seed_keywords: [cockroach, keeda, poochi, insect, rat, mouse, chuha, worm, fungus, mold, mould, stale, baasi, rotten, "bad smell", badbu, "food poisoning", vomit, ulti, vaanthi, unhygienic, "not clean"]
+    example_texts:
+      - saw a cockroach near the bakery section
+      - dairy section me keeda tha aur smell bahut kharab thi
+      - biscuit packet la poochi irundhuchu, romba ganda
+  - id: physical_safety
+    name: Physical safety hazard
+    owner: Store Ops
+    default_severity: high
+    mandatory_risk: true
+    family: hygiene_safety
+    description: slip, electrical or fire hazard, broken glass, injury on premises
+    seed_keywords: [slipped, slip, "fell down", "wet floor", "broken glass", injury, injured, "short circuit", spark, "electric shock", fire, hazard, "current laga"]
+    example_texts:
+      - floor was wet near the entrance and I slipped
+      - billing ke paas wire khula tha, short circuit ka darr
+      - kids play area la glass udanja irundhuchu
+  - id: long_queue
+    name: Long queues and waiting
+    owner: Store Ops
+    default_severity: medium
+    mandatory_risk: false
+    family: store_ops
+    description: long billing queues, too few counters open, long waiting times
+    seed_keywords: ["long queue", "long line", "too many people", "only one counter", "one counter", "ek hi counter", "lambi line", "waiting 20", "waiting 30", "no counter"]
+    example_texts:
+      - queue is too long, only one counter open
+      - billing line bahut lambi thi, ek hi counter chalu tha
+      - evening la queue romba perusa irundhuchu, 25 min wait pannen
+  - id: billing_error
+    name: Billing error
+    owner: Store Ops
+    default_severity: medium
+    mandatory_risk: false
+    family: billing
+    description: wrong bill, overcharge, double charge, wrong amount at the counter
+    seed_keywords: ["wrong bill", "wrong amount", "extra charge", "double charge", "billed twice", "overcharged", "bill me zyada", "charged more", "incorrect bill"]
+    example_texts:
+      - I was billed twice for the same item
+      - bill me 200 rupaye zyada le liye
+      - enakku wrong amount charge pannitanga, bill therinja podhum
+  - id: store_cleanliness
+    name: Store cleanliness
+    owner: Store Ops
+    default_severity: low
+    mandatory_risk: false
+    family: store_ops
+    description: dirty floor or aisles, dirty washrooms, untidy shelves, spillage
+    seed_keywords: ["dirty floor", "dirty washroom", "dirty toilet", ganda, "untidy", "not cleaned", spillage, dust, "wet and dirty", "dirty entrance"]
+    example_texts:
+      - floor was wet and dirty near the entrance
+      - washroom ganda tha aur paani bhara pada tha
+      - aisle la spill irundhuchu, yaarum clean pannala
+  - id: equipment_breakdown
+    name: Equipment breakdown
+    owner: Store Ops
+    default_severity: medium
+    mandatory_risk: false
+    family: store_ops
+    description: trolley, lift, escalator, scanner, POS or AC broken or not working
+    seed_keywords: [trolley, "lift not working", "lift broken", "ac not working", "scanner not working", "pos down", escalator, "card machine", "machine not working", "ac kharab"]
+    example_texts:
+      - the self-checkout scanner was not working
+      - lift kharab thi, pura saaman seedhi se le jaana pada
+      - billing la card machine work pannala
+  - id: parking_access
+    name: Parking or store access
+    owner: Store Ops
+    default_severity: low
+    mandatory_risk: false
+    family: store_ops
+    description: parking full or missing, entrance blocked, ramp or wheelchair access problems
+    seed_keywords: [parking, "no space", "entrance blocked", ramp, wheelchair, "parking full", "no parking", "gate closed"]
+    example_texts:
+      - there is no parking space near the store
+      - entrance ke paas cart rakh diye the, jaana mushkil tha
+      - wheelchair la ulla vara mudiyala, ramp illa
+  - id: staff_misconduct
+    name: Staff misconduct
+    owner: HR
+    default_severity: high
+    mandatory_risk: true
+    family: conduct
+    description: abuse, harassment, discrimination, threats, bribery by staff
+    seed_keywords: [abus*, harass*, gaali, badtameez*, misbehav*, threat*, inappropriat*, discriminat*, bribe, bribery, ghoos, "touched me", dhakka]
+    example_texts:
+      - the staff member abused a customer at the counter
+      - the security guard harassed me near the exit
+      - staff was shouting and threatening customers
+      - staff ne gaali di aur bahut badtameezi ki
+      - security wale ne dhakka diya
+      - security staff romba misbehave pannanga, romba bayama irundhuchu
+      - staff apasabdam pesinanga
+      - staff gaali det hota, khup vaitag zala
+  - id: rude_service
+    name: Rude or dismissive staff
+    owner: HR
+    default_severity: medium
+    mandatory_risk: false
+    family: conduct
+    description: staff being rude, dismissive, argumentative or unhelpful
+    seed_keywords: [rude, rudely, "spoke rudely", dismissive, "no manners", argued, "shouted at", "not helpful", "bad attitude", "unfriendly"]
+    example_texts:
+      - billing guy was very rude to me
+      - billing wale ne badtameezi se baat ki
+      - staff romba rude ah pesinanga, konjam kuda respect illa
+  - id: staff_shortage
+    name: Staff shortage
+    owner: HR
+    default_severity: medium
+    mandatory_risk: false
+    family: staffing
+    description: too few staff on the floor, counters unstaffed, long waits due to shortage
+    seed_keywords: ["no staff", "no one at", "understaffed", "one person", "staff absent", "less staff", "no staff at", "koi staff", "staff illa"]
+    example_texts:
+      - there was no staff at the dairy section for 10 minutes
+      - counter pe koi staff nahi tha
+      - juice section la yaarum staff illa, help kekka aal illa
+  - id: staff_knowledge
+    name: Staff product knowledge
+    owner: HR
+    default_severity: low
+    mandatory_risk: false
+    family: staffing
+    description: staff cannot answer product questions or give wrong information
+    seed_keywords: ["no idea", "could not answer", "did not know", "didnt know", untrained, "wrong information", "staff unaware", "no information", "no clue", "pata nahi", "nahi pata", "galat jankari", theriya*, mahit]
+    example_texts:
+      - staff had no idea where the gluten free section was
+      - the staff gave me wrong information about the offer
+      - no one could tell me if the product was veg
+      - staff ko product ke baare me kuch nahi pata tha
+      - offer ke baare me galat jankari di
+      - staff kitta keta answer theriyaadhunnu sonnanga
+      - veg product edhunnu staff ku theriyala
+      - staff la product baddal kahich mahit nahi hota
+  - id: allergen_mislabel
+    name: Allergen or veg/non-veg mislabel
+    owner: Supply Chain
+    default_severity: critical
+    mandatory_risk: true
+    family: allergen_safety
+    description: wrong or missing allergen, veg/non-veg label, or reaction from mislabelled product
+    seed_keywords: [allerg, allergic, "nut free", peanut, gluten, mislabel, "wrong label", "veg label", "non veg", rash, swelling, hives, khujli, sujan, "wrong ingredients"]
+    example_texts:
+      - label said nut free but my son had a reaction
+      - packet pe nut free likha tha par peanuts the, allergy ho gayi
+      - veg label irundha product la non veg irundhuchu, romba kastam
+  - id: expired_stock
+    name: Expired or near-expiry stock
+    owner: Supply Chain
+    default_severity: high
+    mandatory_risk: true
+    family: hygiene_safety
+    description: expired or near-expiry products on the shelf
+    seed_keywords: [expired, expiry, "past date", "expiry date", "old stock", "use by", "already expired", "expiry khatam", "date khatam"]
+    example_texts:
+      - found milk packets past their expiry date on the shelf
+      - shelf pe expired biscuits rakhe the
+      - juice expiry date kadandhu pochu, shelf la irundhuchu
+  - id: short_delivery
+    name: Short delivery
+    owner: Supply Chain
+    default_severity: medium
+    mandatory_risk: false
+    family: supply
+    description: delivered quantity less than ordered, missing cartons from a delivery
+    seed_keywords: ["short delivery", "delivery was short", "short quantity", "less delivered", "delivered fewer", "fewer units", "missing cartons", "cartons missing", "short supply", "delivery short", "kam quantity", "kam aaya", "less aachu", "kami aala", "maal kami"]
+    example_texts:
+      - today's delivery was short by three cartons of milk
+      - the supplier delivered fewer units than ordered
+      - two boxes were missing from the morning delivery
+      - the delivery note said five cartons but only three arrived
+      - aaj ki delivery me maal kam aaya
+      - order panna quantity vida delivery la less aachu
+      - delivery madhe maal kami aala
+  - id: damaged_goods
+    name: Damaged goods on arrival
+    owner: Supply Chain
+    default_severity: medium
+    mandatory_risk: false
+    family: supply
+    description: damaged, dented, crushed or torn packs arriving with a delivery
+    seed_keywords: ["damaged pack", "damaged goods", "damaged delivery", "torn packet", dent, dented, crushed, "broken seal", "leaking bottle", leaking, "dab gaya", udanja, churgal, "toota hua"]
+    example_texts:
+      - three tetra packs arrived dented and leaking
+      - the delivery had crushed biscuit packets
+      - vegetable crates arrived with spoiled items
+      - the oil can arrived with a big dent
+      - chips packets in the carton were crushed
+      - delivery me aadhe packets dab gaye the
+      - doodh ke packet phate hue aaye
+      - van la vandha juice bottles ellam udanja irundhuchu
+      - delivery madhe packets churgaleli hoti
+  - id: delivery_delay
+    name: Supplier delivery delay
+    owner: Supply Chain
+    default_severity: medium
+    mandatory_risk: false
+    family: supply
+    description: supplier delivery late or did not arrive on the scheduled day
+    seed_keywords: ["delivery late", "supplier late", "did not arrive", "late arrival", "delayed stock", "truck late", "delivery nahi aayi", "delivery delay"]
+    example_texts:
+      - the morning delivery has not arrived yet
+      - supplier ka maal kal se nahi aaya hai
+      - delivery innum varala, shelf empty ah irukku
+  - id: packaging_defect
+    name: Packaging defect
+    owner: Supply Chain
+    default_severity: medium
+    mandatory_risk: false
+    family: supply
+    description: leaking, torn or tampered packaging on shelf products
+    seed_keywords: [packaging, tampered, "seal broken", "seal open", leaking, "torn pack", "no seal", "packet open", "wrapper open"]
+    example_texts:
+      - the oil bottle seal was broken on the shelf
+      - shelf pe kai packets ke seal khule the
+      - biscuit wrapper open ah irundhuchu, tamper madhiri
+  - id: out_of_stock
+    name: Out of stock
+    owner: Merchandising
+    default_severity: medium
+    mandatory_risk: false
+    family: availability
+    description: item unavailable or repeatedly out of stock
+    seed_keywords: ["out of stock", "not available", "sold out", khatam, "no stock", unavailable, "stock nahi", "empty shelf", "stock illa", "milk khatam"]
+    example_texts:
+      - milk is out of stock again
+      - bread khatam ho gaya, kal bhi nahi tha
+      - eggs stock illa, moonu naal ah same problem
+  - id: price_mismatch
+    name: Price mismatch
+    owner: Merchandising
+    default_severity: medium
+    mandatory_risk: false
+    family: billing
+    description: shelf price differs from the billed price, MRP or offer price confusion
+    seed_keywords: ["shelf price", "bill different", "price tag", mrp, "different price", "price difference", "offer price", "price match", "shelf me alag", "price mismatch"]
+    example_texts:
+      - shelf price is different from the bill amount
+      - shelf pe ek price tha aur bill me dusra
+      - offer price kooda bill la vera price vanthuchu
+  - id: wrong_placement
+    name: Wrong shelf placement or missing label
+    owner: Merchandising
+    default_severity: low
+    mandatory_risk: false
+    family: store_ops
+    description: item in the wrong aisle or shelf, missing shelf labels
+    seed_keywords: ["wrong aisle", "wrong shelf", "no label", "missing label", misplaced, "wrong section", "confusing layout", "shelf label"]
+    example_texts:
+      - the rice was in the wrong aisle with no shelf label
+      - saaman galat shelf pe rakha tha
+      - price label illa, edhukku evlo nu theriyala
+  - id: promo_not_applied
+    name: Promotion not applied
+    owner: Merchandising
+    default_severity: medium
+    mandatory_risk: false
+    family: billing
+    description: advertised offer or discount not applied at billing
+    seed_keywords: ["offer not applied", "discount not applied", promo, "sale price", "offer missing", "offer nahi laga", "buy one get one", "bogo", "offer apply"]
+    example_texts:
+      - the buy one get one offer was not applied at billing
+      - offer ka discount bill me nahi laga
+      - combo offer apply aagala, full price vangitanga
+  - id: assortment_gap
+    name: Assortment gap
+    owner: Merchandising
+    default_severity: low
+    mandatory_risk: false
+    family: availability
+    description: missing brands, sizes or ranges that used to be available
+    seed_keywords: [brand, brands, "brand not available", "no variety", variety, "missing range", range, "limited options", options, "no organic", organic, "not stocked", discontinued, "sugar free", "range nahi"]
+    example_texts:
+      - this store does not stock the sugar free range anymore
+      - the brand I buy is never available in this store
+      - very limited options in the snacks section
+      - is store me organic brands nahi milte
+      - indha size illa, range eh kadayaadhu
+  - id: product_quality
+    name: Product quality
+    owner: Merchandising
+    default_severity: medium
+    mandatory_risk: false
+    family: quality
+    description: poor freshness or quality of fresh products
+    seed_keywords: ["poor quality", "not fresh", spoiled, "quality bad", tasteless, "stale bread", rotten, "quality kharab", "freshness", "quality illa"]
+    example_texts:
+      - the vegetables were not fresh today
+      - fruits ki quality bahut kharab thi
+      - bread romba hard ah irundhuchu, fresh illa
+  - id: app_crash
+    name: App crash or freeze
+    owner: Digital
+    default_severity: medium
+    mandatory_risk: false
+    family: digital
+    description: mobile app crashes, freezes or hangs, especially at checkout
+    seed_keywords: ["app crash", "app crashed", "app hang", "app freeze", "checkout crash", "app closes", "app stuck", "white screen", "app band", "app not working"]
+    example_texts:
+      - the app crashes at checkout every time
+      - app checkout pe baar baar hang ho jata hai
+      - app payment panna apo freeze aagudhu
+  - id: payment_failure
+    name: Payment failure
+    owner: Digital
+    default_severity: high
+    mandatory_risk: false
+    family: payment
+    description: payment failed or money deducted twice, refund not received
+    seed_keywords: ["payment failed", "double debited", "money deducted", "payment stuck", "upi failed", "transaction failed", "refund not received", "payment nahi hua", "amount cut"]
+    example_texts:
+      - my payment failed but money was deducted
+      - paisa kat gaya par payment nahi hua
+      - refund innum varala, double debit aachu
+  - id: login_issue
+    name: Login or OTP issue
+    owner: Digital
+    default_severity: medium
+    mandatory_risk: false
+    family: digital
+    description: cannot log in, OTP not received, password reset problems
+    seed_keywords: ["cannot login", "cant login", "login fail", "otp not received", "otp nahi aaya", "password reset", "login stuck", "otp issue", "login nahi"]
+    example_texts:
+      - I cannot log in, the OTP never arrives
+      - login nahi ho raha, OTP hi nahi aa raha
+      - app open panna mudiyala, login fail aagudhu
+  - id: wrong_online_order
+    name: Wrong online order delivery
+    owner: Digital
+    default_severity: medium
+    mandatory_risk: false
+    family: digital
+    description: wrong or missing items in an online order delivery
+    seed_keywords: ["wrong item", "missing item", "wrong order", "item missing", "different product", "not what i ordered", "order wrong", "wrong delivery", "galat item"]
+    example_texts:
+      - my online order had the wrong item and one missing
+      - online order me galat item bhej diya
+      - order panna product illa, vera item vandhuchu
+  - id: delivery_slot_issue
+    name: Delivery slot issue
+    owner: Digital
+    default_severity: medium
+    mandatory_risk: false
+    family: digital
+    description: home delivery slot unavailable, cancelled or rescheduled late
+    seed_keywords: ["no slot", "slot unavailable", "slot cancelled", "slot rescheduled", "no delivery slot", "slot nahi", "delivery slot", "slot issue"]
+    example_texts:
+      - no delivery slot was available for three days
+      - slot cancel ho gaya aur koi update nahi
+      - book panna slot cancel aagiruchu, delivery varala
+  - id: coupon_error
+    name: Coupon or loyalty points error
+    owner: Digital
+    default_severity: low
+    mandatory_risk: false
+    family: billing
+    description: coupon or voucher not working, loyalty points not credited
+    seed_keywords: ["coupon not working", "points not added", "loyalty points", "coupon expired", voucher, "promo code", "points missing", "coupon apply", "points nahi"]
+    example_texts:
+      - the coupon code is not working at checkout
+      - coupon apply nahi ho raha hai
+      - loyalty points add aagala, coupon invalid nu kaamikudhu
