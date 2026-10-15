@@ -22,3 +22,4 @@ reports/runs/*/config.yaml
 # IDE
 .vscode/
 .idea/
+src/*.egg-info/
